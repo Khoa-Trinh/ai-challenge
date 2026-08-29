@@ -133,7 +133,7 @@ class AICPipeline:
 
     def inspect(self, query_vi="", query_en_list=None, top_n=None):
         """
-        Tìm kiếm hình ảnh. Nếu chỉ nhập query_vi, hệ thống sẽ TỰ ĐỘNG DỊCH sang Tiếng Anh.
+        Tìm kiếm hình ảnh. Nếu chỉ nhập query_vi, hệ thống sẽ TỰ ĐỘNG DỊCH sang Tiếng Anh trước khi gọi visualize.
         """
         # Xử lý tự động dịch nếu người dùng chỉ nhập Tiếng Việt
         if (query_en_list is None or len(query_en_list) == 0) and query_vi:
@@ -157,7 +157,7 @@ class AICPipeline:
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
-        # Sử dụng hàm inspect_query từ module visualize
+        # Sử dụng hàm inspect_query từ module visualize (chỉ nhận query_en_list)
         visualize.inspect_query(
             processor=self.processor,
             model=self.model,
@@ -165,7 +165,6 @@ class AICPipeline:
             manifest=self.manifest,
             global_map=self.global_map,
             metadata=self.metadata,
-            query_vi=query_vi if isinstance(query_vi, str) else ", ".join(query_vi),
             query_en_list=query_en_list,
             top_n=top_n,
             base_kf_dir=self.base_kf_dir,

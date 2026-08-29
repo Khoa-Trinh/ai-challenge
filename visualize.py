@@ -6,11 +6,21 @@ from PIL import Image
 from model import encode_text_queries
 
 
+def is_english_text(text):
+    """
+    Kiểm tra nhanh xem chuỗi có phải tiếng Anh hay không (không chứa ký tự có dấu tiếng Việt).
+    """
+    vietnamese_chars = set(
+        "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+        "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ"
+    )
+    return not any(char in vietnamese_chars for char in text)
+
+
 def image_to_base64(img, max_width=900):
     """
     Chuyển đổi PIL Image sang chuỗi Base64 để hiển thị trực tiếp trong HTML với kích thước lớn.
     """
-    # Resize nhẹ nếu ảnh quá khổ để hiển thị nhanh và nét
     w, h = img.size
     if w > max_width:
         ratio = max_width / float(w)
@@ -28,7 +38,6 @@ def inspect_query(
     manifest,
     global_map,
     metadata,
-    query_vi,
     query_en_list,
     top_n=6,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
@@ -39,8 +48,24 @@ def inspect_query(
 ):
     """
     Tìm kiếm và hiển thị từng kết quả: Ảnh Keyframe LỚN -> Chi tiết rõ ràng -> Đường kẻ phân cách.
+    CHỈ chấp nhận truy vấn Tiếng Anh (query_en_list).
     """
-    print(f"🔎 Đang tìm kiếm cho: '{query_vi}'...")
+    if isinstance(query_en_list, str):
+        query_en_list = [query_en_list]
+
+    query_en_list = [str(q).strip() for q in query_en_list if str(q).strip()]
+    if not query_en_list:
+        raise ValueError("visualize.inspect_query yêu cầu ít nhất một câu query tiếng Anh!")
+
+    # Kiểm tra ngôn ngữ: Chỉ chấp nhận tiếng Anh
+    for q in query_en_list:
+        if not is_english_text(q):
+            raise ValueError(
+                f"❌ Lỗi: visualize.inspect_query CHỈ chấp nhận Tiếng Anh! Query phát hiện tiếng Việt: '{q}'.\n"
+                f"💡 Vui lòng nhập Tiếng Anh hoặc sử dụng AICPipeline.inspect(query_vi=...) để tự động dịch."
+            )
+
+    print(f"🔎 Đang tìm kiếm cho: {query_en_list}...")
 
     # 1. Encode text queries với padding và truncation
     query_vec = encode_text_queries(
