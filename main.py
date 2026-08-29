@@ -6,14 +6,15 @@ import importlib
 import model
 import dataset
 import visualize
+import export
 
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python theo đúng thứ tự phụ thuộc (model -> dataset -> visualize -> main).
+    Tải lại tức thì các module Python theo đúng thứ tự phụ thuộc (model -> dataset -> visualize -> export -> main).
     Xử lý an toàn khi đổi tên hàm, thêm/xóa module mà KHÔNG CẦN Restart Kernel!
     """
-    modules_order = ["model", "dataset", "visualize", "main"]
+    modules_order = ["model", "dataset", "visualize", "export", "main"]
     for mod_name in modules_order:
         if mod_name in sys.modules:
             try:
@@ -62,6 +63,7 @@ class AICPipeline:
             config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data")
         )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
+        self.output_dir = config.get("output_dir", "/kaggle/working/submissions")
         self.device = model.get_device(config.get("device", "cuda"))
         self.viz_cfg = config.get("visualization", {})
 
@@ -121,7 +123,6 @@ class AICPipeline:
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
-        # Gọi qua module visualize (đảm bảo luôn là phiên bản mới nhất sau hot_reload)
         visualize_mod = sys.modules.get("visualize", visualize)
         visualize_mod.inspect_query(
             processor=self.processor,
@@ -192,7 +193,18 @@ class AICPipeline:
             display(search_panel)
 
         except ImportError:
-            # Fallback nếu không có ipywidgets
             q = input("Nhập query tiếng Anh: ").strip()
             if q:
                 self.inspect(query=q)
+
+    def export(self, output_dir=None):
+        """
+        Khởi chạy công cụ xuất kết quả nộp bài ra file CSV theo chuẩn quy định (KIS, Q&A, TRAKE)
+        và cung cấp link tải trực tiếp.
+        """
+        out_dir = output_dir or self.output_dir
+        export_mod = sys.modules.get("export", export)
+        return export_mod.export_submission_interactive(
+            global_map=self.global_map,
+            output_dir=out_dir
+        )
