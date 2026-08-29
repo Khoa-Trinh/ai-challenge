@@ -114,7 +114,8 @@ class AICPipeline:
         Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
         if query is None or not str(query).strip():
-            return self.input()
+            self.input()
+            return
 
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
@@ -189,7 +190,6 @@ class AICPipeline:
                 output_area
             ])
             display(search_panel)
-            return search_panel
 
         except ImportError:
             # Fallback nếu không có ipywidgets
