@@ -7,32 +7,14 @@ import faiss
 def load_dataset_and_metadata(data_compile_dir):
     """
     Nạp mảng SigLIP Feature, Manifest, Global Map, Processed Metadata, và Global Objects từ data_compile_dir.
-    Tự động tìm kiếm trong các biến thể đường dẫn thư mục dataset nếu cần.
     """
-    # Tự động hỗ trợ cả aic-compiled-data và aic-compile-data nếu một trong hai khả dụng
-    alt_dirs = [
-        data_compile_dir,
-        "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compiled-data",
-        "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data",
-        "/kaggle/input/aic-compiled-data",
-        "/kaggle/input/aic-compile-data",
-    ]
-    actual_dir = None
-    for candidate in alt_dirs:
-        if candidate and os.path.exists(candidate) and os.path.exists(os.path.join(candidate, "siglip_features.npy")):
-            actual_dir = candidate
-            break
+    print(f"Đang nạp SigLIP Embeddings và Metadata từ: {data_compile_dir}")
 
-    if actual_dir is None:
-        actual_dir = data_compile_dir
-
-    print(f"Đang nạp SigLIP Embeddings và Metadata từ: {actual_dir}")
-
-    features_path = os.path.join(actual_dir, "siglip_features.npy")
-    manifest_path = os.path.join(actual_dir, "manifest_keyframes.json")
-    global_map_path = os.path.join(actual_dir, "global_map_keyframes.json")
-    metadata_path = os.path.join(actual_dir, "processed_metadata.json")
-    objects_path = os.path.join(actual_dir, "global_objects.json")
+    features_path = os.path.join(data_compile_dir, "siglip_features.npy")
+    manifest_path = os.path.join(data_compile_dir, "manifest_keyframes.json")
+    global_map_path = os.path.join(data_compile_dir, "global_map_keyframes.json")
+    metadata_path = os.path.join(data_compile_dir, "processed_metadata.json")
+    objects_path = os.path.join(data_compile_dir, "global_objects.json")
 
     for path in [features_path, manifest_path, global_map_path, metadata_path]:
         if not os.path.exists(path):
