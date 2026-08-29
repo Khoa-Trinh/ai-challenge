@@ -204,12 +204,16 @@ def inspect_sequential_query(
     show_html=True,
 ):
     """
-    MODE 2: SEQUENTIAL ACTIONS / TIMELINE SEARCH
-    Tìm kiếm độc lập từng bước hành động, sau đó lọc chuỗi thời gian (t1 <= t2 <= ...) và hiển thị song song.
+    MODE 2: SEQUENTIAL ACTIONS / TIMELINE SEARCH (với hỗ trợ Synonyms cho từng bước)
+    - Mỗi phần tử trong steps_en_list có thể là chuỗi đơn hoặc 1 danh sách các câu đồng nghĩa cho riêng bước đó.
+    - Tìm kiếm độc lập từng bước trên FAISS -> lọc chuỗi thời gian (t1 <= t2 <= ...) -> hiển thị song song.
     """
     num_steps = len(steps_en_list)
     if num_steps < 2:
         print("⚠️ Chế độ Sequential cần ít nhất 2 bước hành động. Chuyển sang Synonyms search.")
+        first_step = steps_en_list[0] if steps_en_list else []
+        if isinstance(first_step, str):
+            first_step = [first_step]
         return inspect_query(
             processor=processor,
             model=model,
@@ -217,8 +221,8 @@ def inspect_sequential_query(
             manifest=manifest,
             global_map=global_map,
             metadata=metadata,
-            query_vi=" ".join(steps_vi_list or steps_en_list),
-            query_en_list=steps_en_list,
+            query_vi=" ".join(steps_vi_list[0] if (steps_vi_list and isinstance(steps_vi_list[0], list)) else (steps_vi_list or first_step)),
+            query_en_list=first_step,
             top_n=top_n,
             base_kf_dir=base_kf_dir,
             vector_search_top_k=vector_search_top_k,
@@ -227,15 +231,21 @@ def inspect_sequential_query(
             show_html=show_html,
         )
 
-    print(f"🔎 [Sequential Mode] Đang tìm kiếm chuỗi {num_steps} bước hành động theo thời gian...")
+    print(f"🔎 [Sequential + Synonyms Mode] Đang tìm kiếm chuỗi {num_steps} bước hành động theo thời gian...")
 
-    # 1. Tìm kiếm FAISS riêng cho từng bước
+    # 1. Tìm kiếm FAISS riêng cho từng bước (kết hợp Synonyms nếu có)
     step_results = []  # step_results[step_idx] = {v_id: [candidates]}
     for step_idx, step_query in enumerate(steps_en_list):
+        # Hỗ trợ cả chuỗi đơn và danh sách đồng nghĩa
+        if isinstance(step_query, str):
+            step_query_list = [step_query]
+        else:
+            step_query_list = [str(q).strip() for q in step_query if str(q).strip()]
+
         query_vec = encode_text_queries(
             processor,
             model,
-            [step_query],
+            step_query_list,
             device=device,
             max_length=max_length,
             truncation=True,
@@ -272,14 +282,11 @@ def inspect_sequential_query(
         step_results.append(video_cands)
 
     # 2. Ghép nối và kiểm tra tính nhất quán thời gian (Temporal Alignment)
-    # Lấy tập hợp tất cả video xuất hiện ở Bước 1
     matched_sequences = []
 
     for v_id, cands_step0 in step_results[0].items():
-        # Kiểm tra xem video này có xuất hiện ở các bước tiếp theo không
         has_all_steps = all(v_id in step_results[s] for s in range(1, num_steps))
-        
-        # Tìm tổ hợp frame tốt nhất thỏa mãn t0 <= t1 <= t2
+
         best_combo = None
         best_combo_score = -1.0
 
@@ -291,7 +298,7 @@ def inspect_sequential_query(
                     if 0 <= time_diff <= max_time_gap:
                         combo_score = (c0["score"] + c1["score"]) / 2.0 + 0.05  # Thưởng điểm thứ tự thời gian
                     else:
-                        combo_score = (c0["score"] + c1["score"]) / 2.0  # Không có thưởng nếu sai thứ tự
+                        combo_score = (c0["score"] + c1["score"]) / 2.0  # Không thưởng nếu sai thứ tự
 
                     if combo_score > best_combo_score:
                         best_combo_score = combo_score
@@ -312,7 +319,7 @@ def inspect_sequential_query(
             best_combo = combo
             best_combo_score = combo_score
         else:
-            # Video chỉ khớp 1 bước (cho điểm thấp hơn)
+            # Video chỉ khớp bước 1 (cho điểm thấp hơn)
             c0 = cands_step0[0]
             best_combo = [c0] + [None] * (num_steps - 1)
             best_combo_score = c0["score"] * 0.7
@@ -351,8 +358,18 @@ def inspect_sequential_query(
         steps_html = ""
         first_time = 0
         for s_idx, cand in enumerate(steps_data):
-            step_title_vi = steps_vi_list[s_idx] if steps_vi_list and s_idx < len(steps_vi_list) else ""
-            step_en = steps_en_list[s_idx] if s_idx < len(steps_en_list) else ""
+            # Lấy mô tả hiển thị
+            raw_vi = steps_vi_list[s_idx] if steps_vi_list and s_idx < len(steps_vi_list) else ""
+            if isinstance(raw_vi, list):
+                step_title_vi = " / ".join(raw_vi)
+            else:
+                step_title_vi = str(raw_vi)
+
+            raw_en = steps_en_list[s_idx] if s_idx < len(steps_en_list) else ""
+            if isinstance(raw_en, list):
+                step_en = " / ".join(raw_en)
+            else:
+                step_en = str(raw_en)
 
             if cand is not None:
                 kf_name = cand["kf_name"]
@@ -366,8 +383,8 @@ def inspect_sequential_query(
 
                 step_card = f"""
                 <div style="flex: 1; min-width: 320px; background: #0f172a; border-radius: 10px; padding: 14px; border: 1px solid #334155;">
-                    <div style="font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 6px;">
-                        📍 Bước {s_idx + 1}: <span style="font-weight: normal; color: #cbd5e1;">{step_title_vi or step_en}</span>
+                    <div style="font-size: 15px; font-weight: bold; color: #38bdf8; margin-bottom: 6px;">
+                        📍 Bước {s_idx + 1}: <span style="font-weight: normal; color: #cbd5e1; font-size: 13px;">{step_title_vi or step_en}</span>
                     </div>
                     {img_html}
                     <div style="margin-top: 8px; font-size: 14px; color: #cbd5e1; line-height: 1.5;">
@@ -384,7 +401,7 @@ def inspect_sequential_query(
             else:
                 step_card = f"""
                 <div style="flex: 1; min-width: 320px; background: #0f172a; border-radius: 10px; padding: 20px; border: 1px dashed #475569; text-align: center; color: #64748b;">
-                    <div style="font-size: 16px; font-weight: bold; color: #94a3b8; margin-bottom: 6px;">📍 Bước {s_idx + 1}</div>
+                    <div style="font-size: 15px; font-weight: bold; color: #94a3b8; margin-bottom: 6px;">📍 Bước {s_idx + 1}</div>
                     <div style="padding: 40px 0;">⚠️ Không tìm thấy frame khớp cho bước này trong video</div>
                 </div>
                 """

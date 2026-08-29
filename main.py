@@ -100,7 +100,7 @@ class AICPipeline:
             self.index = build_faiss_index(self.features)
             AICPipeline._cached_index = self.index
 
-        # 4. Offline Translator (nạp khi cần hoặc nếu load_translation=True)
+        # 4. Offline Translator
         self.translator_tok = None
         self.translator_mod = None
         if load_translation:
@@ -117,7 +117,7 @@ class AICPipeline:
 
     def translate(self, vi_texts):
         """
-        Dịch chuỗi hoặc danh sách chuỗi Tiếng Việt sang Tiếng Anh.
+        Dịch chuỗi, danh sách chuỗi, hoặc danh sách lồng Tiếng Việt sang Tiếng Anh.
         """
         if self.translator_tok is None:
             self._init_translator()
@@ -157,7 +157,7 @@ class AICPipeline:
 
     def inspect_sequential(self, steps_en_list, steps_vi_list=None, top_n=None, max_time_gap=None):
         """
-        Mode 2: Sequential Actions / Timeline Inspection
+        Mode 2: Sequential Actions / Timeline Inspection (hỗ trợ Synonyms cho từng bước)
         """
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
@@ -185,11 +185,11 @@ class AICPipeline:
         """
         Menu tương tác trực quan ngay trong Notebook để chọn Mode và nhập query.
         """
-        print("="*60)
+        print("="*65)
         print("🎯 AIC INTERACTIVE VIDEO SEARCH MENU")
         print("  [1] Synonyms Mode (Cùng 1 cảnh / Đa góc nhìn / Vector Mean)")
-        print("  [2] Sequential Mode (Chuỗi hành động tuần tự theo thời gian)")
-        print("="*60)
+        print("  [2] Sequential Mode (Chuỗi hành động tuần tự + Synonyms từng bước)")
+        print("="*65)
         mode = input("👉 Chọn Mode (1 hoặc 2) [Mặc định: 1]: ").strip() or "1"
 
         use_translate = input("🌐 Bạn có muốn nhập Tiếng Việt và tự động dịch sang Tiếng Anh? (y/n) [n]: ").strip().lower() == 'y'
@@ -199,8 +199,9 @@ class AICPipeline:
             n_steps = int(input("Số bước hành động (vd: 2 hoặc 3): ").strip() or "2")
             steps_input = []
             for s in range(n_steps):
-                step_text = input(f"  Nhập mô tả Bước {s+1}: ").strip()
-                steps_input.append(step_text)
+                step_text = input(f"  Nhập mô tả Bước {s+1} (hoặc các câu đồng nghĩa cách nhau bằng dấu phẩy ','): ").strip()
+                synonyms = [q.strip() for q in step_text.split(",") if q.strip()]
+                steps_input.append(synonyms if len(synonyms) > 1 else (synonyms[0] if synonyms else ""))
 
             if use_translate:
                 print("🔄 Đang tự động dịch sang Tiếng Anh...")
@@ -212,7 +213,7 @@ class AICPipeline:
 
         else:
             print("\n--- 🔎 SYNONYMS MODE (Mô tả cùng 1 cảnh) ---")
-            raw_input = input("Nhập câu query (hoặc các sub-query cách nhau bằng dấu phẩy ','): ").strip()
+            raw_input = input("Nhập câu query (hoặc các sub-query đồng nghĩa cách nhau bằng dấu phẩy ','): ").strip()
             queries = [q.strip() for q in raw_input.split(",") if q.strip()]
 
             if use_translate:
@@ -241,7 +242,7 @@ def main():
         return
 
     if args.translate and args.query_vi and not args.query_en:
-        args.query_en = [pipeline.translate(args.query_vi)]
+        args.query_en = pipeline.translate(args.query_vi)
 
     if args.mode == "sequential":
         pipeline.inspect_sequential(
