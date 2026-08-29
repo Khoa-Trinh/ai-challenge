@@ -1,0 +1,18 @@
+model_name: "google/siglip-so400m-patch14-384"
+siglip_dir: "/kaggle/input/datasets/nguynhuyds/siglip-feature"
+base_kf_dir: "/kaggle/input/datasets/nguynhuyds/aic-dataset"
+output_dir: "/kaggle/working/submissions"
+device: "cuda"
+
+retrieval:
+  top_k: 100
+  spread_window: 2
+  vector_search_top_k: 500
+  bm25_boost_weight: 0.20
+
+visualization:
+  top_n: 6
+  max_length: 64
+  vector_search_top_k: 200
+  bm25_boost_weight: 0.20
+  max_videos_per_query: 2

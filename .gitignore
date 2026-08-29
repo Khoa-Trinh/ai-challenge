@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data, weights, and artifacts
+*.npy
+*.pth
+*.pt
+*.bin
+*.onnx
+*.safetensors
+submissions/
+*.csv
+datasets/
+data/
+
+# Environments & IDEs
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+.ipynb_checkpoints/
