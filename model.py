@@ -1,5 +1,5 @@
 import torch
-from transformers import AutoProcessor, SiglipModel, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoProcessor, SiglipModel
 
 
 def get_device(device_name="cuda"):
@@ -19,46 +19,6 @@ def load_model(model_name="google/siglip-so400m-patch14-384", device="cuda"):
     model = SiglipModel.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
     model.eval()
     return processor, model
-
-
-def load_translator(model_name="Helsinki-NLP/opus-mt-vi-en", device="cuda"):
-    """
-    Nạp mô hình dịch thuật nhẹ, chính xác cục bộ (Helsinki-NLP/opus-mt-vi-en ~300MB).
-    Chạy 100% offline trên GPU/CPU, không cần mạng hay Google Translate.
-    """
-    print(f"🌐 Đang nạp mô hình dịch Tiếng Việt -> Tiếng Anh ({model_name})...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    translator_model = AutoModelForSeq2SeqLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32
-    ).to(device)
-    translator_model.eval()
-    print("-> Mô hình dịch thuật sẵn sàng!")
-    return tokenizer, translator_model
-
-
-def translate_vi_to_en(tokenizer, translator_model, texts, device="cuda"):
-    """
-    Dịch chuỗi hoặc danh sách chuỗi Tiếng Việt sang Tiếng Anh.
-    """
-    if not texts:
-        return "" if isinstance(texts, str) else []
-
-    is_single = isinstance(texts, str)
-    text_list = [texts] if is_single else texts
-    cleaned_list = [str(t).strip() for t in text_list if str(t).strip()]
-
-    if not cleaned_list:
-        return "" if is_single else []
-
-    inputs = tokenizer(cleaned_list, padding=True, truncation=True, max_length=128, return_tensors="pt").to(device)
-    with torch.no_grad():
-        translated_tokens = translator_model.generate(**inputs, max_length=128, num_beams=4)
-        translated_texts = [
-            tokenizer.decode(t, skip_special_tokens=True).strip() for t in translated_tokens
-        ]
-
-    return translated_texts[0] if is_single else translated_texts
 
 
 def encode_text_queries(processor, model, query_en_list, device="cuda", max_length=None, truncation=False):

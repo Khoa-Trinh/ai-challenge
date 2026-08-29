@@ -8,7 +8,7 @@ import dataset
 import model
 import visualize
 from dataset import load_dataset_and_metadata, build_faiss_index
-from model import load_model, load_translator, translate_vi_to_en, get_device
+from model import load_model, get_device
 from visualize import inspect_query
 
 
@@ -17,25 +17,8 @@ def hot_reload():
     Tải lại tức thì các module Python (visualize, dataset, model, main)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
-    # 1. Dọn sạch các module cũ đã bị xóa khỏi đĩa
-    for stale in ["llm_expander", "retrieval"]:
-        if stale in sys.modules:
-            del sys.modules[stale]
-
-    # 2. Reload an toàn các module cốt lõi
-    for mod_name in ["visualize", "dataset", "model"]:
-        if mod_name in sys.modules:
-            try:
-                importlib.reload(sys.modules[mod_name])
-            except Exception as e:
-                print(f"⚠️ Không thể reload {mod_name}: {e}")
-
-    if "main" in sys.modules:
-        try:
-            importlib.reload(sys.modules["main"])
-        except Exception as e:
-            pass
-
+    for mod in [visualize, dataset, model]:
+        importlib.reload(mod)
     print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
 
 
@@ -66,15 +49,12 @@ class AICPipeline:
     _cached_global_map = None
     _cached_metadata = None
     _cached_index = None
-    _cached_translator_tok = None
-    _cached_translator_mod = None
 
-    def __init__(self, config_path="config.yaml", reuse_cache=True, load_translator_on_start=False, **kwargs):
+    def __init__(self, config_path="config.yaml", reuse_cache=True, **kwargs):
         config = load_config(config_path)
         config.update({k: v for k, v in kwargs.items() if v is not None})
 
         self.model_name = config.get("model_name", "google/siglip-so400m-patch14-384")
-        self.translator_model_name = config.get("translator_model", "Helsinki-NLP/opus-mt-vi-en")
         self.data_compile_dir = config.get(
             "data_compile_dir",
             config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data")
@@ -86,9 +66,9 @@ class AICPipeline:
         print(f"Khởi tạo AIC Pipeline trên Device: {self.device}")
         print(f"-> Thư mục compile dataset: {self.data_compile_dir}")
 
-        # 1. SigLIP Model & Processor (Dùng lại nếu đã có trong RAM)
+        # 1. Model & Processor (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_model is not None and AICPipeline._cached_processor is not None:
-            print("-> Tái sử dụng SigLIP Model từ bộ nhớ RAM/GPU.")
+            print("-> Tái sử dụng Model & Processor từ bộ nhớ RAM/GPU (không cần nạp lại).")
             self.processor = AICPipeline._cached_processor
             self.model = AICPipeline._cached_model
         else:
@@ -118,65 +98,20 @@ class AICPipeline:
             self.index = build_faiss_index(self.features)
             AICPipeline._cached_index = self.index
 
-        # 4. Local Neural Translator (Lazy load khi cần hoặc load trước)
-        self.translator_tok = None
-        self.translator_mod = None
-        if load_translator_on_start:
-            self._ensure_translator()
-
-    def _ensure_translator(self):
-        """Khởi tạo mô hình dịch nếu chưa nạp."""
-        if self.translator_tok is None or self.translator_mod is None:
-            if AICPipeline._cached_translator_tok is not None and AICPipeline._cached_translator_mod is not None:
-                self.translator_tok = AICPipeline._cached_translator_tok
-                self.translator_mod = AICPipeline._cached_translator_mod
-            else:
-                self.translator_tok, self.translator_mod = load_translator(self.translator_model_name, self.device)
-                AICPipeline._cached_translator_tok = self.translator_tok
-                AICPipeline._cached_translator_mod = self.translator_mod
-
-    def translate(self, vi_texts):
-        """
-        Dịch tự động Tiếng Việt sang Tiếng Anh bằng mô hình cục bộ.
-        """
-        self._ensure_translator()
-        return translate_vi_to_en(self.translator_tok, self.translator_mod, vi_texts, device=self.device)
-
     def reload(self):
         """
         Hot-reload mã nguồn mới nhất mà vẫn giữ nguyên Model & Index trong RAM.
         """
         hot_reload()
-        if "main" in sys.modules:
-            self.__class__ = sys.modules["main"].AICPipeline
 
     def inspect(self, query_vi="", query_en_list=None, top_n=None):
-        """
-        Tìm kiếm hình ảnh. Nếu chỉ nhập query_vi, hệ thống sẽ TỰ ĐỘNG DỊCH sang Tiếng Anh trước khi gọi visualize.
-        """
-        # Xử lý tự động dịch nếu người dùng chỉ nhập Tiếng Việt
-        if (query_en_list is None or len(query_en_list) == 0) and query_vi:
-            print(f"🔄 Đang tự động dịch prompt Tiếng Việt bằng Local Model...")
-            # Hỗ trợ tách nhiều câu nếu phân cách bằng dấu phẩy
-            if isinstance(query_vi, str):
-                vi_splits = [q.strip() for q in query_vi.split(",") if q.strip()]
-            else:
-                vi_splits = query_vi
-
-            query_en_list = self.translate(vi_splits)
-            if isinstance(query_en_list, str):
-                query_en_list = [query_en_list]
-
-            print(f"✅ Bản dịch Tiếng Anh: {query_en_list}")
-
         if query_en_list is None:
             query_en_list = []
-
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
-        # Sử dụng hàm inspect_query từ module visualize (chỉ nhận query_en_list)
+        # Sử dụng hàm inspect_query từ module visualize (luôn cập nhật khi reload)
         visualize.inspect_query(
             processor=self.processor,
             model=self.model,
@@ -184,6 +119,7 @@ class AICPipeline:
             manifest=self.manifest,
             global_map=self.global_map,
             metadata=self.metadata,
+            query_vi=query_vi,
             query_en_list=query_en_list,
             top_n=top_n,
             base_kf_dir=self.base_kf_dir,
@@ -203,10 +139,10 @@ def main():
 
     pipeline = AICPipeline(config_path=args.config)
 
-    if not args.query_en and not args.query_vi:
-        user_input = input("Nhập query (Tiếng Việt hoặc Tiếng Anh): ").strip()
+    if not args.query_en:
+        user_input = input("Nhập query tiếng Anh: ").strip()
         if user_input:
-            args.query_vi = user_input
+            args.query_en = [user_input]
 
     pipeline.inspect(
         query_vi=args.query_vi,

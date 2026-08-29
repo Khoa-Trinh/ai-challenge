@@ -1,6 +1,4 @@
 transformers
-sentencepiece
-protobuf
 faiss-gpu
 tqdm
 pandas
