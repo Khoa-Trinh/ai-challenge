@@ -10,14 +10,16 @@ import visualize
 from dataset import load_dataset_and_metadata, build_faiss_index
 from model import load_model, load_translator, translate_vi_to_en, get_device
 from visualize import inspect_query, inspect_sequential_query
+from llm_expander import expand_query_with_gemini
 
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python (visualize, dataset, model)
+    Tải lại tức thì các module Python (visualize, dataset, model, llm_expander)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
-    for mod in [visualize, dataset, model]:
+    import llm_expander
+    for mod in [visualize, dataset, model, llm_expander]:
         importlib.reload(mod)
     print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
 
@@ -51,7 +53,7 @@ class AICPipeline:
     _cached_translator_tok = None
     _cached_translator_mod = None
 
-    def __init__(self, config_path="config.yaml", reuse_cache=True, load_translation=False, **kwargs):
+    def __init__(self, config_path="config.yaml", reuse_cache=True, load_translation=False, gemini_api_key=None, **kwargs):
         config = load_config(config_path)
         config.update({k: v for k, v in kwargs.items() if v is not None})
 
@@ -63,6 +65,7 @@ class AICPipeline:
         )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
         self.device = get_device(config.get("device", "cuda"))
+        self.gemini_api_key = gemini_api_key or config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
         self.viz_cfg = config.get("visualization", {})
 
         print(f"Khởi tạo AIC Pipeline trên Device: {self.device}")
@@ -129,6 +132,40 @@ class AICPipeline:
         """
         hot_reload()
 
+    def auto_search(self, query_vi, api_key=None, top_n=None):
+        """
+        TỰ ĐỘNG 100%: Dùng Gemini Flash phân tích prompt Tiếng Việt, xác định Mode và sinh chuỗi Synonyms Tiếng Anh, sau đó tiến hành tìm kiếm.
+        """
+        key = api_key or self.gemini_api_key
+        print(f"🤖 Đang gửi query tiếng Việt đến Gemini Flash để phân tích và mở rộng góc nhìn...")
+        llm_result = expand_query_with_gemini(query_vi, api_key=key)
+
+        mode = llm_result.get("mode", "synonyms")
+        steps = llm_result.get("steps", [])
+        print(f"-> Mode tự động nhận diện: 🎯 [{mode.upper()}] | Số bước/phân cảnh: {len(steps)}")
+        for idx, s in enumerate(steps):
+            print(f"   + Bước {idx+1}: {s}")
+
+        if mode == "sequential" and len(steps) >= 2:
+            self.inspect_sequential(
+                steps_en_list=steps,
+                steps_vi_list=[f"Phân cảnh {i+1}" for i in range(len(steps))],
+                top_n=top_n
+            )
+        else:
+            # Gộp tất cả synonyms cho single scene
+            all_synonyms = []
+            for s in steps:
+                if isinstance(s, list):
+                    all_synonyms.extend(s)
+                else:
+                    all_synonyms.append(s)
+            self.inspect(
+                query_vi=query_vi,
+                query_en_list=all_synonyms,
+                top_n=top_n
+            )
+
     def inspect(self, query_vi="", query_en_list=None, top_n=None):
         """
         Mode 1: Synonyms / Single Scene Inspection
@@ -187,10 +224,16 @@ class AICPipeline:
         """
         print("="*65)
         print("🎯 AIC INTERACTIVE VIDEO SEARCH MENU")
+        print("  [0] 🤖 Auto-Search với Gemini Flash (Tự phân tích Prompt & Sinh Synonyms)")
         print("  [1] Synonyms Mode (Cùng 1 cảnh / Đa góc nhìn / Vector Mean)")
         print("  [2] Sequential Mode (Chuỗi hành động tuần tự + Synonyms từng bước)")
         print("="*65)
-        mode = input("👉 Chọn Mode (1 hoặc 2) [Mặc định: 1]: ").strip() or "1"
+        mode = input("👉 Chọn Mode (0, 1 hoặc 2) [Mặc định: 0]: ").strip() or "0"
+
+        if mode == "0":
+            raw_input = input("\n📝 Dán nguyên đoạn query Tiếng Việt: ").strip()
+            self.auto_search(raw_input)
+            return
 
         use_translate = input("🌐 Bạn có muốn nhập Tiếng Việt và tự động dịch sang Tiếng Anh? (y/n) [n]: ").strip().lower() == 'y'
 
@@ -228,17 +271,22 @@ class AICPipeline:
 def main():
     parser = argparse.ArgumentParser(description="AIC Video Search & Inspection Pipeline")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config.yaml")
-    parser.add_argument("--mode", type=str, choices=["synonyms", "sequential"], default="synonyms")
+    parser.add_argument("--mode", type=str, choices=["auto", "synonyms", "sequential"], default="auto")
     parser.add_argument("--query_vi", type=str, default="", help="Vietnamese query description")
     parser.add_argument("--query_en", nargs="+", default=[], help="English query or sub-queries list")
+    parser.add_argument("--gemini_api_key", type=str, default=None, help="Gemini API Key")
     parser.add_argument("--translate", action="store_true", help="Auto translate Vietnamese queries")
     parser.add_argument("--top_n", type=int, default=None, help="Top N results to inspect visually")
     args = parser.parse_args()
 
-    pipeline = AICPipeline(config_path=args.config, load_translation=args.translate)
+    pipeline = AICPipeline(config_path=args.config, load_translation=args.translate, gemini_api_key=args.gemini_api_key)
 
     if not args.query_en and not args.query_vi:
         pipeline.interactive()
+        return
+
+    if args.mode == "auto" and args.query_vi:
+        pipeline.auto_search(args.query_vi, api_key=args.gemini_api_key, top_n=args.top_n)
         return
 
     if args.translate and args.query_vi and not args.query_en:
