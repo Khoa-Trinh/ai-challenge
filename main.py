@@ -17,8 +17,25 @@ def hot_reload():
     Tải lại tức thì các module Python (visualize, dataset, model, main)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
-    for mod in [visualize, dataset, model]:
-        importlib.reload(mod)
+    # 1. Dọn sạch các module cũ đã bị xóa khỏi đĩa
+    for stale in ["llm_expander", "retrieval"]:
+        if stale in sys.modules:
+            del sys.modules[stale]
+
+    # 2. Reload an toàn các module cốt lõi
+    for mod_name in ["visualize", "dataset", "model"]:
+        if mod_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[mod_name])
+            except Exception as e:
+                print(f"⚠️ Không thể reload {mod_name}: {e}")
+
+    if "main" in sys.modules:
+        try:
+            importlib.reload(sys.modules["main"])
+        except Exception as e:
+            pass
+
     print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
 
 
@@ -130,6 +147,8 @@ class AICPipeline:
         Hot-reload mã nguồn mới nhất mà vẫn giữ nguyên Model & Index trong RAM.
         """
         hot_reload()
+        if "main" in sys.modules:
+            self.__class__ = sys.modules["main"].AICPipeline
 
     def inspect(self, query_vi="", query_en_list=None, top_n=None):
         """
