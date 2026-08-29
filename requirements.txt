@@ -6,3 +6,4 @@ pillow
 opencv-python
 matplotlib
 pyyaml
+ipywidgets

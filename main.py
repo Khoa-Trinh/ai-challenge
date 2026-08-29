@@ -1,4 +1,3 @@
-import argparse
 import yaml
 import os
 import sys
@@ -20,7 +19,6 @@ def hot_reload():
             try:
                 importlib.reload(sys.modules[mod_name])
             except Exception:
-                # Nếu reload thông thường gặp xung đột signature cũ, xóa và import tươi mới
                 del sys.modules[mod_name]
                 __import__(mod_name)
     print("⚡ Hot-reload thành công! Tất cả module và hàm mới đã được cập nhật.")
@@ -110,10 +108,14 @@ class AICPipeline:
         if "main" in sys.modules:
             self.__class__ = sys.modules["main"].AICPipeline
 
-    def inspect(self, query: str, top_n=None):
+    def inspect(self, query: str = None, top_n=None):
         """
         Tìm kiếm và hiển thị kết quả trực quan cho một câu query Tiếng Anh (string).
+        Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
+        if query is None or not str(query).strip():
+            return self.input()
+
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
@@ -135,25 +137,62 @@ class AICPipeline:
             device=self.device,
         )
 
+    def input(self):
+        """
+        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Search Button).
+        """
+        try:
+            import ipywidgets as widgets
+            from IPython.display import display, clear_output
 
-def main():
-    parser = argparse.ArgumentParser(description="AIC Video Search & Inspection Pipeline")
-    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config.yaml")
-    parser.add_argument("--query", type=str, default="", help="English query string")
-    parser.add_argument("--top_n", type=int, default=None, help="Top N results to inspect visually")
-    args = parser.parse_args()
+            query_box = widgets.Text(
+                value='',
+                placeholder='Nhập query tiếng Anh (ví dụ: preparing and cooking fish on cutting board)...',
+                description='🔍 Query:',
+                layout=widgets.Layout(width='60%')
+            )
 
-    pipeline = AICPipeline(config_path=args.config)
+            top_n_slider = widgets.IntSlider(
+                value=self.viz_cfg.get("top_n", 6),
+                min=1,
+                max=20,
+                step=1,
+                description='Top N:',
+                layout=widgets.Layout(width='25%')
+            )
 
-    query = args.query.strip()
-    if not query:
-        query = input("Nhập query tiếng Anh (string): ").strip()
+            search_btn = widgets.Button(
+                description=' Search',
+                button_style='primary',
+                icon='search',
+                layout=widgets.Layout(width='120px')
+            )
 
-    pipeline.inspect(
-        query=query,
-        top_n=args.top_n,
-    )
+            output_area = widgets.Output()
 
+            def execute_search(_=None):
+                q = query_box.value.strip()
+                if not q:
+                    with output_area:
+                        clear_output()
+                        print("⚠️ Vui lòng nhập query tiếng Anh vào ô tìm kiếm!")
+                    return
+                with output_area:
+                    clear_output()
+                    self.inspect(query=q, top_n=top_n_slider.value)
 
-if __name__ == "__main__":
-    main()
+            search_btn.on_click(execute_search)
+            query_box.on_submit(execute_search)
+
+            search_panel = widgets.VBox([
+                widgets.HBox([query_box, top_n_slider, search_btn], layout=widgets.Layout(align_items='center', margin='10px 0')),
+                output_area
+            ])
+            display(search_panel)
+            return search_panel
+
+        except ImportError:
+            # Fallback nếu không có ipywidgets
+            q = input("Nhập query tiếng Anh: ").strip()
+            if q:
+                self.inspect(query=q)
