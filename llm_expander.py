@@ -25,12 +25,8 @@ Return ONLY a valid JSON object in the following format with no markdown formatt
 
 # Thứ tự ưu tiên model chính thức: Ưu tiên Flash 3.5 -> Flash 3.5 Lite (500 RPD) -> Flash 3.1 Lite (500 RPD) -> Flash 2.5 / 1.5
 DEFAULT_MODEL_FALLBACKS = [
-    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
 ]
 
 
