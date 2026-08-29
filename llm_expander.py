@@ -23,20 +23,21 @@ Return ONLY a valid JSON object in the following format with no markdown formatt
 }
 """
 
-# Danh sách model theo thứ tự ưu tiên (Tự động chuyển model nếu chạm giới hạn RPD hoặc lỗi 429)
+# Thứ tự ưu tiên model chính thức: Ưu tiên Flash 3.5 -> Flash 3.5 Lite (500 RPD) -> Flash 3.1 Lite (500 RPD) -> Flash 2.5 / 1.5
 DEFAULT_MODEL_FALLBACKS = [
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
-    "gemini-flash-latest"
 ]
 
 
 def expand_query_with_gemini(query_vi, api_key=None, model_candidates=None):
     """
     Tự động phân tích prompt Tiếng Việt với cơ chế Auto-Failover:
-    Nếu một model hết quota (HTTP 429), tự động chuyển sang model Flash Lite / Flash tiếp theo!
+    Ưu tiên Gemini 3.5 Flash -> tự động nhảy sang Gemini 3.5 Flash Lite (500 RPD) hoặc Gemini 3.1 Flash Lite (500 RPD) nếu hết quota!
     """
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
@@ -83,9 +84,8 @@ def expand_query_with_gemini(query_vi, api_key=None, model_candidates=None):
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
             last_error = f"HTTP {e.code} ({model_name}): {error_body}"
-            # Nếu chạm rate limit (429) hoặc 404/400 (model name khác biệt), tự động nhảy sang model tiếp theo
             if e.code in [429, 404, 400, 503]:
-                print(f"⚠️ Model [{model_name}] gặp mã lỗi {e.code} (hết RPD hoặc chưa hỗ trợ endpoint này). Đang tự động chuyển sang model tiếp theo...")
+                print(f"⚠️ Model [{model_name}] (HTTP {e.code}) hết quota hoặc bận. Đang tự động chuyển sang model tiếp theo...")
                 continue
             else:
                 raise RuntimeError(f"Gemini API Error ({e.code}): {error_body}")
