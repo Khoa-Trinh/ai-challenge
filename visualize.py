@@ -3,7 +3,7 @@ import base64
 import io
 import numpy as np
 from PIL import Image
-from model import encode_text_query
+import model
 
 
 def image_to_base64(img, max_width=900):
@@ -22,7 +22,7 @@ def image_to_base64(img, max_width=900):
 
 def inspect_query(
     processor,
-    model,
+    model_obj,
     index,
     manifest,
     global_map,
@@ -46,9 +46,9 @@ def inspect_query(
     print(f"🔎 Đang tìm kiếm: \"{query_en}\"")
 
     # 1. Encode text query đơn
-    query_vec = encode_text_query(
+    query_vec = model.encode_text_query(
         processor,
-        model,
+        model_obj,
         query_en,
         device=device,
         max_length=max_length,

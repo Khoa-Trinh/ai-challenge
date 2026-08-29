@@ -4,21 +4,26 @@ import os
 import sys
 import importlib
 
-import dataset
 import model
+import dataset
 import visualize
-from dataset import load_dataset_and_metadata, build_faiss_index
-from model import load_model, get_device
 
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python (visualize, dataset, model)
-    ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
+    Tải lại tức thì các module Python theo đúng thứ tự phụ thuộc (model -> dataset -> visualize -> main).
+    Xử lý an toàn khi đổi tên hàm, thêm/xóa module mà KHÔNG CẦN Restart Kernel!
     """
-    for mod in [visualize, dataset, model]:
-        importlib.reload(mod)
-    print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
+    modules_order = ["model", "dataset", "visualize", "main"]
+    for mod_name in modules_order:
+        if mod_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[mod_name])
+            except Exception:
+                # Nếu reload thông thường gặp xung đột signature cũ, xóa và import tươi mới
+                del sys.modules[mod_name]
+                __import__(mod_name)
+    print("⚡ Hot-reload thành công! Tất cả module và hàm mới đã được cập nhật.")
 
 
 def load_config(config_path="config.yaml"):
@@ -59,7 +64,7 @@ class AICPipeline:
             config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data")
         )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
-        self.device = get_device(config.get("device", "cuda"))
+        self.device = model.get_device(config.get("device", "cuda"))
         self.viz_cfg = config.get("visualization", {})
 
         print(f"Khởi tạo AIC Pipeline trên Device: {self.device}")
@@ -71,7 +76,7 @@ class AICPipeline:
             self.processor = AICPipeline._cached_processor
             self.model = AICPipeline._cached_model
         else:
-            self.processor, self.model = load_model(self.model_name, self.device)
+            self.processor, self.model = model.load_model(self.model_name, self.device)
             AICPipeline._cached_processor = self.processor
             AICPipeline._cached_model = self.model
 
@@ -83,7 +88,7 @@ class AICPipeline:
             self.global_map = AICPipeline._cached_global_map
             self.metadata = AICPipeline._cached_metadata
         else:
-            self.features, self.manifest, self.global_map, self.metadata = load_dataset_and_metadata(self.data_compile_dir)
+            self.features, self.manifest, self.global_map, self.metadata = dataset.load_dataset_and_metadata(self.data_compile_dir)
             AICPipeline._cached_features = self.features
             AICPipeline._cached_manifest = self.manifest
             AICPipeline._cached_global_map = self.global_map
@@ -94,7 +99,7 @@ class AICPipeline:
             print("-> Tái sử dụng FAISS Index từ bộ nhớ RAM.")
             self.index = AICPipeline._cached_index
         else:
-            self.index = build_faiss_index(self.features)
+            self.index = dataset.build_faiss_index(self.features)
             AICPipeline._cached_index = self.index
 
     def reload(self):
@@ -102,6 +107,8 @@ class AICPipeline:
         Hot-reload mã nguồn mới nhất mà vẫn giữ nguyên Model & Index trong RAM.
         """
         hot_reload()
+        if "main" in sys.modules:
+            self.__class__ = sys.modules["main"].AICPipeline
 
     def inspect(self, query: str, top_n=None):
         """
@@ -111,9 +118,11 @@ class AICPipeline:
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
-        visualize.inspect_query(
+        # Gọi qua module visualize (đảm bảo luôn là phiên bản mới nhất sau hot_reload)
+        visualize_mod = sys.modules.get("visualize", visualize)
+        visualize_mod.inspect_query(
             processor=self.processor,
-            model=self.model,
+            model_obj=self.model,
             index=self.index,
             manifest=self.manifest,
             global_map=self.global_map,
