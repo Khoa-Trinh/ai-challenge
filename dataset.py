@@ -6,14 +6,33 @@ import faiss
 
 def load_dataset_and_metadata(data_compile_dir):
     """
-    Nạp mảng SigLIP Feature, Manifest, Global Map, và Processed Metadata từ data_compile_dir.
+    Nạp mảng SigLIP Feature, Manifest, Global Map, Processed Metadata, và Global Objects từ data_compile_dir.
+    Tự động tìm kiếm trong các biến thể đường dẫn thư mục dataset nếu cần.
     """
-    print(f"Đang nạp SigLIP Embeddings và Metadata từ: {data_compile_dir}")
+    # Tự động hỗ trợ cả aic-compiled-data và aic-compile-data nếu một trong hai khả dụng
+    alt_dirs = [
+        data_compile_dir,
+        "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compiled-data",
+        "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data",
+        "/kaggle/input/aic-compiled-data",
+        "/kaggle/input/aic-compile-data",
+    ]
+    actual_dir = None
+    for candidate in alt_dirs:
+        if candidate and os.path.exists(candidate) and os.path.exists(os.path.join(candidate, "siglip_features.npy")):
+            actual_dir = candidate
+            break
 
-    features_path = os.path.join(data_compile_dir, "siglip_features.npy")
-    manifest_path = os.path.join(data_compile_dir, "manifest_keyframes.json")
-    global_map_path = os.path.join(data_compile_dir, "global_map_keyframes.json")
-    metadata_path = os.path.join(data_compile_dir, "processed_metadata.json")
+    if actual_dir is None:
+        actual_dir = data_compile_dir
+
+    print(f"Đang nạp SigLIP Embeddings và Metadata từ: {actual_dir}")
+
+    features_path = os.path.join(actual_dir, "siglip_features.npy")
+    manifest_path = os.path.join(actual_dir, "manifest_keyframes.json")
+    global_map_path = os.path.join(actual_dir, "global_map_keyframes.json")
+    metadata_path = os.path.join(actual_dir, "processed_metadata.json")
+    objects_path = os.path.join(actual_dir, "global_objects.json")
 
     for path in [features_path, manifest_path, global_map_path, metadata_path]:
         if not os.path.exists(path):
@@ -33,8 +52,17 @@ def load_dataset_and_metadata(data_compile_dir):
     with open(metadata_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
+    global_objects = {}
+    if os.path.exists(objects_path):
+        print(f"-> Đang nạp Global Objects Detections: {objects_path}")
+        with open(objects_path, "r", encoding="utf-8") as f:
+            global_objects = json.load(f)
+        print(f"-> Đã nạp thông tin Objects cho {len(global_objects):,} keyframes.")
+    else:
+        print(f"ℹ️ Không tìm thấy '{objects_path}'. Hệ thống vẫn hoạt động ở chế độ Vector Search thuần.")
+
     print(f"-> Đã nạp {len(manifest):,} keyframes vector | Shape: {features.shape}")
-    return features, manifest, global_map, metadata
+    return features, manifest, global_map, metadata, global_objects
 
 
 def build_faiss_index(features):
@@ -45,3 +73,4 @@ def build_faiss_index(features):
     index.add(features)
     print("-> FAISS Index sẵn sàng!")
     return index
+

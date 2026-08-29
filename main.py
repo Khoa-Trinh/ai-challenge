@@ -51,6 +51,7 @@ class AICPipeline:
     _cached_manifest = None
     _cached_global_map = None
     _cached_metadata = None
+    _cached_global_objects = None
     _cached_index = None
 
     def __init__(self, config_path="config.yaml", reuse_cache=True, **kwargs):
@@ -60,7 +61,7 @@ class AICPipeline:
         self.model_name = config.get("model_name", "google/siglip-so400m-patch14-384")
         self.data_compile_dir = config.get(
             "data_compile_dir",
-            config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data")
+            config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compiled-data")
         )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
         self.output_dir = config.get("output_dir", "/kaggle/working/submissions")
@@ -80,19 +81,21 @@ class AICPipeline:
             AICPipeline._cached_processor = self.processor
             AICPipeline._cached_model = self.model
 
-        # 2. Features & Metadata (Dùng lại nếu đã có trong RAM)
+        # 2. Features & Metadata & Objects (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_features is not None:
-            print("-> Tái sử dụng SigLIP Embeddings và Metadata từ bộ nhớ RAM.")
+            print("-> Tái sử dụng SigLIP Embeddings, Metadata và Objects từ bộ nhớ RAM.")
             self.features = AICPipeline._cached_features
             self.manifest = AICPipeline._cached_manifest
             self.global_map = AICPipeline._cached_global_map
             self.metadata = AICPipeline._cached_metadata
+            self.global_objects = AICPipeline._cached_global_objects
         else:
-            self.features, self.manifest, self.global_map, self.metadata = dataset.load_dataset_and_metadata(self.data_compile_dir)
+            self.features, self.manifest, self.global_map, self.metadata, self.global_objects = dataset.load_dataset_and_metadata(self.data_compile_dir)
             AICPipeline._cached_features = self.features
             AICPipeline._cached_manifest = self.manifest
             AICPipeline._cached_global_map = self.global_map
             AICPipeline._cached_metadata = self.metadata
+            AICPipeline._cached_global_objects = self.global_objects
 
         # 3. FAISS Index (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_index is not None:
@@ -110,9 +113,10 @@ class AICPipeline:
         if "main" in sys.modules:
             self.__class__ = sys.modules["main"].AICPipeline
 
-    def inspect(self, query: str = None, top_n=None):
+    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None):
         """
         Tìm kiếm và hiển thị kết quả trực quan cho một câu query Tiếng Anh (string).
+        Tự động áp dụng Object Re-ranking nếu có dữ liệu objects.
         Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
         if query is None or not str(query).strip():
@@ -122,6 +126,11 @@ class AICPipeline:
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
+        
+        if use_objects is None:
+            use_objects = self.viz_cfg.get("use_objects", True)
+        if object_weight is None:
+            object_weight = self.viz_cfg.get("object_weight", 0.15)
 
         visualize_mod = sys.modules.get("visualize", visualize)
         visualize_mod.inspect_query(
@@ -133,6 +142,9 @@ class AICPipeline:
             metadata=self.metadata,
             query_en=str(query).strip(),
             top_n=top_n,
+            global_objects=self.global_objects,
+            use_objects=use_objects,
+            object_weight=object_weight,
             base_kf_dir=self.base_kf_dir,
             vector_search_top_k=vector_search_top_k,
             max_length=max_length,
@@ -141,7 +153,7 @@ class AICPipeline:
 
     def input(self):
         """
-        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Search Button).
+        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Toggle Object Re-rank + Search Button).
         """
         try:
             import ipywidgets as widgets
@@ -149,9 +161,9 @@ class AICPipeline:
 
             query_box = widgets.Text(
                 value='',
-                placeholder='Nhập query tiếng Anh (ví dụ: preparing and cooking fish on cutting board)...',
+                placeholder='Nhập query tiếng Anh (ví dụ: two cyclists racing on road with car)...',
                 description='🔍 Query:',
-                layout=widgets.Layout(width='60%')
+                layout=widgets.Layout(width='55%')
             )
 
             top_n_slider = widgets.IntSlider(
@@ -160,14 +172,21 @@ class AICPipeline:
                 max=20,
                 step=1,
                 description='Top N:',
-                layout=widgets.Layout(width='25%')
+                layout=widgets.Layout(width='20%')
+            )
+
+            chk_use_objects = widgets.Checkbox(
+                value=self.viz_cfg.get("use_objects", True),
+                description='🎯 Object Re-rank',
+                indent=False,
+                layout=widgets.Layout(width='160px')
             )
 
             search_btn = widgets.Button(
                 description=' Search',
                 button_style='primary',
                 icon='search',
-                layout=widgets.Layout(width='120px')
+                layout=widgets.Layout(width='110px')
             )
 
             output_area = widgets.Output()
@@ -181,13 +200,20 @@ class AICPipeline:
                     return
                 with output_area:
                     clear_output()
-                    self.inspect(query=q, top_n=top_n_slider.value)
+                    self.inspect(
+                        query=q, 
+                        top_n=top_n_slider.value, 
+                        use_objects=chk_use_objects.value
+                    )
 
             search_btn.on_click(execute_search)
             query_box.on_submit(execute_search)
 
             search_panel = widgets.VBox([
-                widgets.HBox([query_box, top_n_slider, search_btn], layout=widgets.Layout(align_items='center', margin='10px 0')),
+                widgets.HBox(
+                    [query_box, top_n_slider, chk_use_objects, search_btn], 
+                    layout=widgets.Layout(align_items='center', margin='10px 0')
+                ),
                 output_area
             ])
             display(search_panel)
@@ -208,3 +234,4 @@ class AICPipeline:
             global_map=self.global_map,
             output_dir=out_dir
         )
+

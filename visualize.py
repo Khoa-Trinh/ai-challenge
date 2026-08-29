@@ -32,9 +32,123 @@ def find_keyframe_image_path(base_kf_dir, v_id, kf_name):
     return None
 
 
-def create_interactive_card(rank, v_id, initial_kf_name, score, global_map, metadata, base_kf_dir):
+def extract_query_entities(query_en):
     """
-    Tạo Card trực quan tương tác có các nút ◀ Prev và Next ▶ để lùi / tiến keyframe theo thời gian thực.
+    Trích xuất danh sách các thực thể / từ khóa vật thể từ câu query tiếng Anh để đối soát với OpenImages / Global Objects.
+    """
+    import re
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', ' ', query_en.lower())
+    words = [w for w in cleaned.split() if len(w) > 2]
+    
+    # Từ dừng (stopwords) phổ biến trong mô tả hình ảnh
+    stopwords = {
+        "the", "and", "with", "this", "that", "there", "from", "into", "onto", "over", 
+        "under", "near", "next", "behind", "front", "side", "view", "scene", "video", 
+        "clip", "frame", "showing", "shows", "look", "looks", "looking", "take", "takes", 
+        "taking", "color", "colors", "colored", "background", "foreground", "photo", 
+        "picture", "image", "first", "last", "then", "after", "before", "many", "some"
+    }
+    
+    # Từ đồng nghĩa / ánh xạ sang OpenImages Entities
+    synonym_map = {
+        "cyclist": ["person", "bicycle", "vehicle"],
+        "cyclists": ["person", "bicycle", "vehicle"],
+        "biker": ["person", "motorcycle", "bicycle", "vehicle"],
+        "bikers": ["person", "motorcycle", "bicycle", "vehicle"],
+        "bicycle": ["bicycle", "vehicle"],
+        "bicycles": ["bicycle", "vehicle"],
+        "bike": ["bicycle", "motorcycle", "vehicle"],
+        "bikes": ["bicycle", "motorcycle", "vehicle"],
+        "motorbike": ["motorcycle", "vehicle"],
+        "motorcycle": ["motorcycle", "vehicle"],
+        "car": ["car", "land vehicle", "vehicle"],
+        "cars": ["car", "land vehicle", "vehicle"],
+        "automobile": ["car", "land vehicle", "vehicle"],
+        "boat": ["boat", "watercraft", "vehicle"],
+        "boats": ["boat", "watercraft", "vehicle"],
+        "ship": ["boat", "watercraft", "vehicle"],
+        "chef": ["person", "clothing"],
+        "cook": ["person", "food", "table"],
+        "man": ["person", "man"],
+        "men": ["person", "man"],
+        "woman": ["person", "woman"],
+        "women": ["person", "woman"],
+        "boy": ["person", "man", "boy"],
+        "girl": ["person", "woman", "girl"],
+        "child": ["person", "boy", "girl"],
+        "children": ["person", "boy", "girl"],
+        "people": ["person", "man", "woman"],
+        "fish": ["fish", "seafood", "animal"],
+        "fishes": ["fish", "seafood", "animal"],
+        "rhino": ["rhinoceros", "animal"],
+        "rhinoceros": ["rhinoceros", "animal"],
+        "monkey": ["monkey", "animal"],
+        "monkeys": ["monkey", "animal"],
+        "building": ["building", "skyscraper", "tower"],
+        "buildings": ["building", "skyscraper", "tower"],
+        "house": ["building", "house"],
+        "tower": ["tower", "building", "skyscraper"],
+        "bridge": ["bridge", "building"],
+        "tree": ["tree", "plant"],
+        "trees": ["tree", "plant"],
+        "plant": ["plant", "flower", "tree"],
+        "plants": ["plant", "flower", "tree"],
+        "table": ["table", "furniture", "desk"],
+        "chair": ["chair", "furniture"],
+        "balloon": ["balloon", "toy"],
+        "balloons": ["balloon", "toy"],
+        "lantern": ["lantern", "lamp", "lighting"],
+        "lamp": ["lamp", "street light", "lighting"],
+        "drum": ["drum", "musical instrument"],
+        "flag": ["flag", "poster"],
+        "hat": ["hat", "fashion accessory", "clothing"],
+        "helmet": ["helmet", "fashion accessory", "clothing"],
+    }
+    
+    query_entities = set()
+    for w in words:
+        if w not in stopwords:
+            query_entities.add(w)
+            # Thử bỏ s hoặc es số nhiều
+            if w.endswith("es") and len(w) > 4:
+                query_entities.add(w[:-2])
+            elif w.endswith("s") and len(w) > 3:
+                query_entities.add(w[:-1])
+                
+            if w in synonym_map:
+                for mapped in synonym_map[w]:
+                    query_entities.add(mapped)
+                    
+    return query_entities
+
+
+def calculate_object_match_score(frame_objs, query_entities):
+    """
+    Tính điểm khớp vật thể giữa frame detections và query entities.
+    """
+    if not frame_objs or not query_entities:
+        return 0.0, {}
+        
+    matched = {}
+    for entity, conf in frame_objs.items():
+        entity_lower = entity.lower()
+        # Kiểm tra exact match hoặc substring match
+        for q_ent in query_entities:
+            if q_ent == entity_lower or q_ent in entity_lower.split():
+                matched[entity] = conf
+                break
+                
+    if not matched:
+        return 0.0, {}
+        
+    score = sum(matched.values())
+    return score, matched
+
+
+def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, matched_objs, global_map, metadata, global_objects, base_kf_dir):
+    """
+    Tạo Card trực quan tương tác có các nút ◀ Prev và Next ▶ để lùi / tiến keyframe theo thời gian thực,
+    đồng thời hiển thị thông tin Object Detections được phát hiện.
     """
     import ipywidgets as widgets
     from IPython.display import display, HTML, clear_output
@@ -77,6 +191,30 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, global_map, meta
         timestamp_link = f"{yt_url}&t={pts_time}s" if yt_url else "#"
         img_path = find_keyframe_image_path(base_kf_dir, v_id, curr_kf_name)
 
+        # Lấy Objects của frame hiện tại
+        frame_objs = global_objects.get(curr_key, {}) if global_objects else {}
+        
+        objects_html_list = []
+        if frame_objs:
+            # Sắp xếp theo score giảm dần
+            sorted_objs = sorted(frame_objs.items(), key=lambda x: x[1], reverse=True)[:8]
+            for ent, conf in sorted_objs:
+                is_matched = ent in matched_objs or ent.lower() in [m.lower() for m in matched_objs]
+                if is_matched:
+                    badge_style = "background: #065f46; color: #6ee7b7; border: 1px solid #10b981; font-weight: bold;"
+                    star = "🎯 "
+                else:
+                    badge_style = "background: #1e293b; color: #94a3b8; border: 1px solid #334155;"
+                    star = ""
+                objects_html_list.append(
+                    f"""<span style="display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 13px; margin: 2px; {badge_style}">
+                        {star}{ent} ({conf:.2f})
+                    </span>"""
+                )
+            objects_display = "".join(objects_html_list)
+        else:
+            objects_display = """<span style="color: #64748b; font-size: 13px; font-style: italic;">Không có detections</span>"""
+
         lbl_frame_indicator.value = f"""
         <span style="font-size: 16px; font-weight: bold; color: #38bdf8; background: #0f172a; padding: 6px 14px; border-radius: 6px; border: 1px solid #334155;">
             {v_id} / <code>{curr_kf_name}</code>
@@ -102,13 +240,17 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, global_map, meta
             </div>
             """
 
+        score_details = f"Score: <b style='color: #34d399;'>{score:.4f}</b>"
+        if siglip_score is not None and abs(score - siglip_score) > 1e-4:
+            score_details += f" <span style='font-size: 13px; color: #94a3b8;'>(SigLIP: {siglip_score:.4f})</span>"
+
         card_html = f"""
         <div style="margin: 15px auto; max-width: 950px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
             
             <!-- 1. KHUNG TIÊU ĐỀ & RANK -->
             <div style="background: linear-gradient(135deg, #1e293b, #0f172a); border-radius: 12px 12px 0 0; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid #3b82f6;">
                 <span style="font-size: 22px; font-weight: 800; color: #60a5fa;">
-                    🏆 TOP {rank} <span style="font-size: 16px; font-weight: normal; color: #cbd5e1;">(Score: <b style="color: #34d399;">{score:.4f}</b>)</span>
+                    🏆 TOP {rank} <span style="font-size: 16px; font-weight: normal; color: #cbd5e1;">({score_details})</span>
                 </span>
                 <span style="background: #1e3a8a; color: #93c5fd; padding: 4px 14px; border-radius: 20px; font-size: 15px; font-weight: 600;">
                     {v_id} / {curr_kf_name}
@@ -125,13 +267,21 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, global_map, meta
                 <div style="margin-bottom: 8px;">
                     <b style="color: #94a3b8;">📌 Video Title:</b> <span style="color: #f1f5f9; font-weight: 600; font-size: 17px;">{title}</span>
                 </div>
-                <div style="margin-bottom: 12px; display: flex; gap: 20px; flex-wrap: wrap;">
+                <div style="margin-bottom: 10px; display: flex; gap: 20px; flex-wrap: wrap;">
                     <div><b style="color: #94a3b8;">🎬 Video ID:</b> <code style="background: #0f172a; color: #38bdf8; padding: 3px 8px; border-radius: 4px; font-size: 15px;">{v_id}</code></div>
                     <div><b style="color: #94a3b8;">🖼️ Frame ID:</b> <b style="color: #fbbf24; font-size: 16px;">{frame_idx}</b> (<code>{curr_kf_name}</code>)</div>
                     <div><b style="color: #94a3b8;">⏱️ Timestamp:</b> <b style="color: #a78bfa; font-size: 16px;">{pts_time}s</b></div>
                 </div>
 
-                <!-- 4. NÚT XEM YOUTUBE -->
+                <!-- 4. KHUNG OBJECT DETECTIONS -->
+                <div style="margin-bottom: 12px; background: #0f172a; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+                    <b style="color: #38bdf8; font-size: 14px;">🏷️ Detected Objects:</b>
+                    <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">
+                        {objects_display}
+                    </div>
+                </div>
+
+                <!-- 5. NÚT XEM YOUTUBE -->
                 <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #334155;">
                     <a href="{timestamp_link}" target="_blank" 
                        style="display: inline-block; background: #dc2626; color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; box-shadow: 0 4px 12px rgba(220,38,38,0.4);">
@@ -176,6 +326,9 @@ def inspect_query(
     metadata,
     query_en: str,
     top_n=6,
+    global_objects=None,
+    use_objects=True,
+    object_weight=0.15,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
     vector_search_top_k=200,
     max_length=64,
@@ -183,7 +336,8 @@ def inspect_query(
     show_html=True,
 ):
     """
-    Tìm kiếm câu query Tiếng Anh (dạng string) và hiển thị kết quả trực quan dạng thẻ lớn kèm nút Prev/Next Frame.
+    Tìm kiếm câu query Tiếng Anh (dạng string), tự động Re-rank bằng Object Detections
+    và hiển thị kết quả trực quan dạng thẻ lớn kèm nút Prev/Next Frame.
     """
     query_en = str(query_en).strip()
     if not query_en:
@@ -202,21 +356,34 @@ def inspect_query(
         truncation=True,
     )
 
-    # 2. Vector Search (Lấy top candidates)
+    # 2. Vector Search (Lấy top candidates ban đầu từ SigLIP)
     scores, indices = index.search(query_vec, vector_search_top_k)
     scores, indices = scores[0], indices[0]
 
-    # 3. Gom nhóm kết quả (tối đa 2 frame / video)
-    candidates = []
-    seen_videos = {}
+    # 3. Object-Aware Re-ranking
+    query_entities = set()
+    if use_objects and global_objects:
+        query_entities = extract_query_entities(query_en)
+        if query_entities:
+            print(f"🎯 Thực thể đối soát Objects: {', '.join(sorted(query_entities))}")
 
+    raw_candidates = []
     for score, idx in zip(scores, indices):
         kf_key = manifest[idx]
         v_id, kf_name = kf_key.split("/")
 
-        final_score = float(score)
-        map_info = global_map.get(kf_key, {})
+        siglip_score = float(score)
+        matched_objs = {}
+        obj_match_score = 0.0
 
+        if use_objects and global_objects and query_entities:
+            frame_objs = global_objects.get(kf_key, {})
+            obj_match_score, matched_objs = calculate_object_match_score(frame_objs, query_entities)
+
+        # Tính điểm kết hợp (SigLIP + Object Bonus)
+        final_score = siglip_score + (object_weight * min(obj_match_score, 1.5))
+
+        map_info = global_map.get(kf_key, {})
         if isinstance(map_info, dict):
             frame_idx = map_info.get("frame_idx", 0)
             pts_time = map_info.get("pts_time", 0.0)
@@ -224,16 +391,29 @@ def inspect_query(
             frame_idx = map_info
             pts_time = 0.0
 
+        raw_candidates.append({
+            "kf_key": kf_key,
+            "video": v_id,
+            "kf_name": kf_name,
+            "frame_idx": frame_idx,
+            "pts_time": pts_time,
+            "siglip_score": siglip_score,
+            "final_score": final_score,
+            "matched_objs": matched_objs,
+            "obj_match_score": obj_match_score
+        })
+
+    # Sắp xếp lại theo điểm kết hợp Final Score
+    raw_candidates.sort(key=lambda x: x["final_score"], reverse=True)
+
+    # 4. Gom nhóm kết quả (tối đa 2 frame / video)
+    candidates = []
+    seen_videos = {}
+    for cand in raw_candidates:
+        v_id = cand["video"]
         if seen_videos.get(v_id, 0) < 2:
             seen_videos[v_id] = seen_videos.get(v_id, 0) + 1
-            candidates.append({
-                "kf_key": kf_key,
-                "video": v_id,
-                "kf_name": kf_name,
-                "frame_idx": frame_idx,
-                "pts_time": pts_time,
-                "score": final_score,
-            })
+            candidates.append(cand)
 
     top_candidates = candidates[:top_n]
 
@@ -241,7 +421,7 @@ def inspect_query(
         print("❌ Không tìm thấy kết quả phù hợp.")
         return
 
-    # 4. Hiển thị từng Card có nút chuyển Frame linh hoạt
+    # 5. Hiển thị từng Card có nút chuyển Frame linh hoạt
     try:
         import ipywidgets as widgets
         from IPython.display import display
@@ -252,16 +432,21 @@ def inspect_query(
     for i, cand in enumerate(top_candidates):
         v_id = cand["video"]
         kf_name = cand["kf_name"]
-        score = cand["score"]
+        final_score = cand["final_score"]
+        siglip_score = cand["siglip_score"]
+        matched_objs = cand["matched_objs"]
 
         if use_widgets and show_html:
             card_widget = create_interactive_card(
                 rank=i + 1,
                 v_id=v_id,
                 initial_kf_name=kf_name,
-                score=score,
+                score=final_score,
+                siglip_score=siglip_score,
+                matched_objs=matched_objs,
                 global_map=global_map,
                 metadata=metadata,
+                global_objects=global_objects,
                 base_kf_dir=base_kf_dir,
             )
             display(card_widget)
@@ -271,4 +456,5 @@ def inspect_query(
             meta = metadata.get(v_id, {})
             yt_url = meta.get("watch_url", "")
             timestamp_link = f"{yt_url}&t={pts_time}s" if yt_url else "#"
-            print(f"Top {i+1}: {v_id}/{kf_name} | Score: {score:.4f} | Frame: {frame_idx} | Time: {pts_time}s | {timestamp_link}")
+            print(f"Top {i+1}: {v_id}/{kf_name} | Score: {final_score:.4f} (SigLIP: {siglip_score:.4f}) | Frame: {frame_idx} | Time: {pts_time}s | {timestamp_link}")
+
