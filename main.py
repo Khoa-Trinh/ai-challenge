@@ -9,12 +9,11 @@ import model
 import visualize
 from dataset import load_dataset_and_metadata, build_faiss_index
 from model import load_model, get_device
-from visualize import inspect_query
 
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python (visualize, dataset, model, main)
+    Tải lại tức thì các module Python (visualize, dataset, model)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
     for mod in [visualize, dataset, model]:
@@ -104,14 +103,14 @@ class AICPipeline:
         """
         hot_reload()
 
-    def inspect(self, query_vi="", query_en_list=None, top_n=None):
-        if query_en_list is None:
-            query_en_list = []
+    def inspect(self, query: str, top_n=None):
+        """
+        Tìm kiếm và hiển thị kết quả trực quan cho một câu query Tiếng Anh (string).
+        """
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
-        # Sử dụng hàm inspect_query từ module visualize (luôn cập nhật khi reload)
         visualize.inspect_query(
             processor=self.processor,
             model=self.model,
@@ -119,8 +118,7 @@ class AICPipeline:
             manifest=self.manifest,
             global_map=self.global_map,
             metadata=self.metadata,
-            query_vi=query_vi,
-            query_en_list=query_en_list,
+            query_en=str(query).strip(),
             top_n=top_n,
             base_kf_dir=self.base_kf_dir,
             vector_search_top_k=vector_search_top_k,
@@ -132,21 +130,18 @@ class AICPipeline:
 def main():
     parser = argparse.ArgumentParser(description="AIC Video Search & Inspection Pipeline")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config.yaml")
-    parser.add_argument("--query_vi", type=str, default="", help="Vietnamese query description")
-    parser.add_argument("--query_en", nargs="+", default=[], help="English query or sub-queries list")
+    parser.add_argument("--query", type=str, default="", help="English query string")
     parser.add_argument("--top_n", type=int, default=None, help="Top N results to inspect visually")
     args = parser.parse_args()
 
     pipeline = AICPipeline(config_path=args.config)
 
-    if not args.query_en:
-        user_input = input("Nhập query tiếng Anh: ").strip()
-        if user_input:
-            args.query_en = [user_input]
+    query = args.query.strip()
+    if not query:
+        query = input("Nhập query tiếng Anh (string): ").strip()
 
     pipeline.inspect(
-        query_vi=args.query_vi,
-        query_en_list=args.query_en,
+        query=query,
         top_n=args.top_n,
     )
 

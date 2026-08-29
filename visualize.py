@@ -3,14 +3,13 @@ import base64
 import io
 import numpy as np
 from PIL import Image
-from model import encode_text_queries
+from model import encode_text_query
 
 
 def image_to_base64(img, max_width=900):
     """
     Chuyển đổi PIL Image sang chuỗi Base64 để hiển thị trực tiếp trong HTML với kích thước lớn.
     """
-    # Resize nhẹ nếu ảnh quá khổ để hiển thị nhanh và nét
     w, h = img.size
     if w > max_width:
         ratio = max_width / float(w)
@@ -28,8 +27,7 @@ def inspect_query(
     manifest,
     global_map,
     metadata,
-    query_vi,
-    query_en_list,
+    query_en: str,
     top_n=6,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
     vector_search_top_k=200,
@@ -38,15 +36,20 @@ def inspect_query(
     show_html=True,
 ):
     """
-    Tìm kiếm và hiển thị từng kết quả: Ảnh Keyframe LỚN -> Chi tiết rõ ràng -> Đường kẻ phân cách.
+    Tìm kiếm câu query Tiếng Anh (dạng string) và hiển thị kết quả trực quan dạng thẻ lớn.
     """
-    print(f"🔎 Đang tìm kiếm cho: '{query_vi}'...")
+    query_en = str(query_en).strip()
+    if not query_en:
+        print("⚠️ Query rỗng, vui lòng nhập chuỗi mô tả tiếng Anh.")
+        return
 
-    # 1. Encode text queries với padding và truncation
-    query_vec = encode_text_queries(
+    print(f"🔎 Đang tìm kiếm: \"{query_en}\"")
+
+    # 1. Encode text query đơn
+    query_vec = encode_text_query(
         processor,
         model,
-        query_en_list,
+        query_en,
         device=device,
         max_length=max_length,
         truncation=True,
