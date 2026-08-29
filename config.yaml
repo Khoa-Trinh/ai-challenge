@@ -1,5 +1,5 @@
 model_name: "google/siglip-so400m-patch14-384"
-siglip_dir: "/kaggle/input/datasets/nguynhuyds/siglip-feature"
+data_compile_dir: "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data"
 base_kf_dir: "/kaggle/input/datasets/nguynhuyds/aic-dataset"
 device: "cuda"
 

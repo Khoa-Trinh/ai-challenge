@@ -20,7 +20,10 @@ class AICPipeline:
         config.update({k: v for k, v in kwargs.items() if v is not None})
 
         self.model_name = config.get("model_name", "google/siglip-so400m-patch14-384")
-        self.siglip_dir = config.get("siglip_dir", "/kaggle/input/datasets/nguynhuyds/siglip-feature")
+        self.data_compile_dir = config.get(
+            "data_compile_dir",
+            config.get("siglip_dir", "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data")
+        )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
         self.device = get_device(config.get("device", "cuda"))
 
@@ -32,7 +35,7 @@ class AICPipeline:
         self.processor, self.model = load_model(self.model_name, self.device)
 
         # 2. Features & Metadata
-        self.features, self.manifest, self.global_map, self.metadata = load_dataset_and_metadata(self.siglip_dir)
+        self.features, self.manifest, self.global_map, self.metadata = load_dataset_and_metadata(self.data_compile_dir)
 
         # 3. FAISS Index
         self.index = build_faiss_index(self.features)
