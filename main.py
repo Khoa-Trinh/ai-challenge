@@ -8,9 +8,20 @@ from visualize import inspect_query
 
 
 def load_config(config_path="config.yaml"):
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+    # Tự động tìm config.yaml theo đường dẫn tương đối hoặc theo thư mục chứa main.py
+    resolved_path = config_path
+    if not os.path.isabs(resolved_path) and not os.path.exists(resolved_path):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        alt_path = os.path.join(base_dir, config_path)
+        if os.path.exists(alt_path):
+            resolved_path = alt_path
+
+    if os.path.exists(resolved_path):
+        with open(resolved_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+            return cfg if isinstance(cfg, dict) else {}
+    else:
+        print(f"⚠️ Cảnh báo: Không tìm thấy file config tại '{config_path}', đang dùng giá trị mặc định.")
     return {}
 
 
@@ -30,6 +41,7 @@ class AICPipeline:
         self.viz_cfg = config.get("visualization", {})
 
         print(f"Khởi tạo AIC Pipeline trên Device: {self.device}")
+        print(f"-> Thư mục compile dataset: {self.data_compile_dir}")
 
         # 1. Model & Processor
         self.processor, self.model = load_model(self.model_name, self.device)
