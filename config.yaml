@@ -1,4 +1,5 @@
 model_name: "google/siglip-so400m-patch14-384"
+translator_model: "Helsinki-NLP/opus-mt-vi-en"
 data_compile_dir: "/kaggle/input/datasets/trnhngkhoashineekuwu/aic-compile-data"
 base_kf_dir: "/kaggle/input/datasets/nguynhuyds/aic-dataset"
 device: "cuda"
@@ -7,4 +8,5 @@ visualization:
   top_n: 6
   max_length: 64
   vector_search_top_k: 200
-  max_videos_per_query: 2
+  sequential_search_top_k: 300
+  max_time_gap: 240

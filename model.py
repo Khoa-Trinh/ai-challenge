@@ -1,5 +1,5 @@
 import torch
-from transformers import AutoProcessor, SiglipModel
+from transformers import AutoProcessor, SiglipModel, AutoTokenizer, AutoModelForSeq2SeqLM
 
 
 def get_device(device_name="cuda"):
@@ -29,6 +29,9 @@ def encode_text_queries(processor, model, query_en_list, device="cuda", max_leng
         query_en_list = [query_en_list]
     query_en_list = [str(q).strip() for q in query_en_list if str(q).strip()]
 
+    if not query_en_list:
+        raise ValueError("query_en_list không được để trống!")
+
     kwargs = {"padding": "max_length", "return_tensors": "pt"}
     if max_length is not None:
         kwargs["max_length"] = max_length
@@ -50,3 +53,32 @@ def encode_text_queries(processor, model, query_en_list, device="cuda", max_leng
         query_vec = avg_embed.cpu().to(torch.float32).numpy()
 
     return query_vec
+
+
+def load_translator(model_name="Helsinki-NLP/opus-mt-vi-en", device="cuda"):
+    """
+    Nạp model dịch tiếng Việt sang tiếng Anh Offline nhẹ (~300MB).
+    """
+    print(f"Đang nạp Model Dịch Offline ({model_name})...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+    model.eval()
+    print("-> Model Dịch sẵn sàng!")
+    return tokenizer, model
+
+
+def translate_vi_to_en(tokenizer, model, texts, device="cuda", max_length=128):
+    """
+    Dịch tự động chuỗi hoặc danh sách chuỗi từ Tiếng Việt sang Tiếng Anh.
+    """
+    is_single = isinstance(texts, str)
+    text_list = [texts] if is_single else list(texts)
+    text_list = [str(t).strip() for t in text_list if str(t).strip()]
+    if not text_list:
+        return "" if is_single else []
+
+    inputs = tokenizer(text_list, return_tensors="pt", padding=True, truncation=True, max_length=max_length).to(device)
+    with torch.no_grad():
+        translated_tokens = model.generate(**inputs, max_length=max_length)
+    results = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)
+    return results[0] if is_single else results
