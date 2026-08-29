@@ -1,5 +1,7 @@
 import os
 import re
+import base64
+import shutil
 
 
 def normalize_kf_name(kf_str):
@@ -66,7 +68,7 @@ def export_submission_interactive(global_map, output_dir="/kaggle/working/submis
     1. Nhập tên file (Hậu tố 'kis', 'qa', 'trake')
     2. Nhập danh sách Video ID (phân cách bằng khoảng trắng)
     3. Nhập danh sách Keyframes (xxx.jpg) cho từng Video ID
-    4. Tra cứu global_map chuyển thành Frame ID và xuất file CSV + link tải trực tiếp.
+    4. Tra cứu global_map chuyển thành Frame ID và xuất file CSV + link tải trực tiếp (Base64 Data URI).
     """
     print("=" * 65)
     print("📋 AIC CSV EXPORT & SUBMISSION TOOL")
@@ -143,10 +145,16 @@ def export_submission_interactive(global_map, output_dir="/kaggle/working/submis
     # 4. Xuất file CSV
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, final_filename)
+    csv_content = "\n".join(csv_rows) + "\n"
 
     with open(out_path, "w", encoding="utf-8") as f:
-        for row in csv_rows:
-            f.write(f"{row}\n")
+        f.write(csv_content)
+
+    # Copy thêm ra /kaggle/working/ để hiện trực tiếp trong Output sidebar
+    try:
+        shutil.copy(out_path, f"/kaggle/working/{final_filename}")
+    except Exception:
+        pass
 
     print("\n" + "=" * 65)
     print(f"✅ ĐÃ XUẤT FILE THÀNH CÔNG: {out_path} ({len(csv_rows)} dòng)")
@@ -159,14 +167,19 @@ def export_submission_interactive(global_map, output_dir="/kaggle/working/submis
     if len(csv_rows) > 10:
         print(f"   ... và {len(csv_rows) - 10} dòng khác.")
 
-    # Hiển thị link download trực tiếp trên Jupyter/Kaggle
+    # Mã hóa Base64 Data URI để tải trực tiếp từ trình duyệt KHÔNG CẦN QUA SERVER KAGGLE PROXY
+    b64_csv = base64.b64encode(csv_content.encode("utf-8")).decode("utf-8")
+    data_uri = f"data:text/csv;charset=utf-8;base64,{b64_csv}"
+
     try:
-        from IPython.display import display, HTML, FileLink
+        from IPython.display import display, HTML
         display(HTML(f"""
-        <div style="margin-top: 15px; padding: 15px; background: #064e3b; border-radius: 8px; border: 2px solid #10b981;">
-            <b style="color: #6ee7b7; font-size: 16px;">📥 Tải file CSV nộp bài:</b><br>
-            <a href="{out_path}" download="{final_filename}" style="display: inline-block; margin-top: 10px; background: #10b981; color: #000; padding: 8px 18px; border-radius: 6px; font-weight: bold; text-decoration: none;">
-                ⬇️ Bấm vào đây để Download {final_filename}
+        <div style="margin-top: 15px; padding: 18px 24px; background: #064e3b; border-radius: 10px; border: 2px solid #10b981; max-width: 600px;">
+            <b style="color: #6ee7b7; font-size: 17px;">📥 Tải file CSV nộp bài:</b><br>
+            <p style="color: #cbd5e1; font-size: 14px; margin: 6px 0 14px 0;">Bấm nút bên dưới để tải trực tiếp file về máy tính:</p>
+            <a href="{data_uri}" download="{final_filename}" 
+               style="display: inline-block; background: #10b981; color: #000000; padding: 10px 24px; border-radius: 8px; font-weight: bold; font-size: 15px; text-decoration: none; box-shadow: 0 4px 14px rgba(16,185,129,0.4);">
+                ⬇️ Download {final_filename}
             </a>
         </div>
         """))
