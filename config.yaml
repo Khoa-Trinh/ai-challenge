@@ -8,5 +8,4 @@ visualization:
   top_n: 6
   max_length: 64
   vector_search_top_k: 200
-  sequential_search_top_k: 300
-  max_time_gap: 240
+  max_videos_per_query: 2

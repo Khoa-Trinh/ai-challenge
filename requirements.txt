@@ -1,4 +1,6 @@
 transformers
+sentencepiece
+protobuf
 faiss-gpu
 tqdm
 pandas
@@ -6,5 +8,3 @@ pillow
 opencv-python
 matplotlib
 pyyaml
-sentencepiece
-sacremoses

@@ -9,24 +9,21 @@ import model
 import visualize
 from dataset import load_dataset_and_metadata, build_faiss_index
 from model import load_model, load_translator, translate_vi_to_en, get_device
-from visualize import inspect_query, inspect_sequential_query
-from llm_expander import expand_query_with_gemini
+from visualize import inspect_query
 
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python (visualize, dataset, model, llm_expander, main)
+    Tải lại tức thì các module Python (visualize, dataset, model, main)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
-    import llm_expander
-    for mod in [visualize, dataset, model, llm_expander]:
+    for mod in [visualize, dataset, model]:
         importlib.reload(mod)
-    if "main" in sys.modules:
-        importlib.reload(sys.modules["main"])
     print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
 
 
 def load_config(config_path="config.yaml"):
+    # Tự động tìm config.yaml theo đường dẫn tương đối hoặc theo thư mục chứa main.py
     resolved_path = config_path
     if not os.path.isabs(resolved_path) and not os.path.exists(resolved_path):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +52,7 @@ class AICPipeline:
     _cached_translator_tok = None
     _cached_translator_mod = None
 
-    def __init__(self, config_path="config.yaml", reuse_cache=True, load_translation=False, gemini_api_key=None, **kwargs):
+    def __init__(self, config_path="config.yaml", reuse_cache=True, load_translator_on_start=False, **kwargs):
         config = load_config(config_path)
         config.update({k: v for k, v in kwargs.items() if v is not None})
 
@@ -67,15 +64,14 @@ class AICPipeline:
         )
         self.base_kf_dir = config.get("base_kf_dir", "/kaggle/input/datasets/nguynhuyds/aic-dataset")
         self.device = get_device(config.get("device", "cuda"))
-        self.gemini_api_key = gemini_api_key or config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
         self.viz_cfg = config.get("visualization", {})
 
         print(f"Khởi tạo AIC Pipeline trên Device: {self.device}")
         print(f"-> Thư mục compile dataset: {self.data_compile_dir}")
 
-        # 1. Model & Processor
+        # 1. SigLIP Model & Processor (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_model is not None and AICPipeline._cached_processor is not None:
-            print("-> Tái sử dụng SigLIP Model & Processor từ bộ nhớ RAM/GPU.")
+            print("-> Tái sử dụng SigLIP Model từ bộ nhớ RAM/GPU.")
             self.processor = AICPipeline._cached_processor
             self.model = AICPipeline._cached_model
         else:
@@ -83,7 +79,7 @@ class AICPipeline:
             AICPipeline._cached_processor = self.processor
             AICPipeline._cached_model = self.model
 
-        # 2. Features & Metadata
+        # 2. Features & Metadata (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_features is not None:
             print("-> Tái sử dụng SigLIP Embeddings và Metadata từ bộ nhớ RAM.")
             self.features = AICPipeline._cached_features
@@ -97,7 +93,7 @@ class AICPipeline:
             AICPipeline._cached_global_map = self.global_map
             AICPipeline._cached_metadata = self.metadata
 
-        # 3. FAISS Index
+        # 3. FAISS Index (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_index is not None:
             print("-> Tái sử dụng FAISS Index từ bộ nhớ RAM.")
             self.index = AICPipeline._cached_index
@@ -105,27 +101,28 @@ class AICPipeline:
             self.index = build_faiss_index(self.features)
             AICPipeline._cached_index = self.index
 
-        # 4. Offline Translator
+        # 4. Local Neural Translator (Lazy load khi cần hoặc load trước)
         self.translator_tok = None
         self.translator_mod = None
-        if load_translation:
-            self._init_translator()
+        if load_translator_on_start:
+            self._ensure_translator()
 
-    def _init_translator(self):
-        if AICPipeline._cached_translator_tok is not None and AICPipeline._cached_translator_mod is not None:
-            self.translator_tok = AICPipeline._cached_translator_tok
-            self.translator_mod = AICPipeline._cached_translator_mod
-        else:
-            self.translator_tok, self.translator_mod = load_translator(self.translator_model_name, self.device)
-            AICPipeline._cached_translator_tok = self.translator_tok
-            AICPipeline._cached_translator_mod = self.translator_mod
+    def _ensure_translator(self):
+        """Khởi tạo mô hình dịch nếu chưa nạp."""
+        if self.translator_tok is None or self.translator_mod is None:
+            if AICPipeline._cached_translator_tok is not None and AICPipeline._cached_translator_mod is not None:
+                self.translator_tok = AICPipeline._cached_translator_tok
+                self.translator_mod = AICPipeline._cached_translator_mod
+            else:
+                self.translator_tok, self.translator_mod = load_translator(self.translator_model_name, self.device)
+                AICPipeline._cached_translator_tok = self.translator_tok
+                AICPipeline._cached_translator_mod = self.translator_mod
 
     def translate(self, vi_texts):
         """
-        Dịch chuỗi, danh sách chuỗi, hoặc danh sách lồng Tiếng Việt sang Tiếng Anh.
+        Dịch tự động Tiếng Việt sang Tiếng Anh bằng mô hình cục bộ.
         """
-        if self.translator_tok is None:
-            self._init_translator()
+        self._ensure_translator()
         return translate_vi_to_en(self.translator_tok, self.translator_mod, vi_texts, device=self.device)
 
     def reload(self):
@@ -133,54 +130,34 @@ class AICPipeline:
         Hot-reload mã nguồn mới nhất mà vẫn giữ nguyên Model & Index trong RAM.
         """
         hot_reload()
-        import main
-        self.__class__ = main.AICPipeline
-        print("⚡ Đã cập nhật methods của AICPipeline!")
-
-    def auto_search(self, query_vi, api_key=None, top_n=None):
-        """
-        TỰ ĐỘNG 100%: Dùng Gemini Flash phân tích prompt Tiếng Việt, xác định Mode và sinh chuỗi Synonyms Tiếng Anh, sau đó tiến hành tìm kiếm.
-        """
-        key = api_key or self.gemini_api_key
-        print(f"🤖 Đang gửi query tiếng Việt đến Gemini Flash để phân tích và mở rộng góc nhìn...")
-        llm_result = expand_query_with_gemini(query_vi, api_key=key)
-
-        mode = llm_result.get("mode", "synonyms")
-        steps = llm_result.get("steps", [])
-        print(f"-> Mode tự động nhận diện: 🎯 [{mode.upper()}] | Số bước/phân cảnh: {len(steps)}")
-        for idx, s in enumerate(steps):
-            print(f"   + Bước {idx+1}: {s}")
-
-        if mode == "sequential" and len(steps) >= 2:
-            self.inspect_sequential(
-                steps_en_list=steps,
-                steps_vi_list=[f"Phân cảnh {i+1}" for i in range(len(steps))],
-                top_n=top_n
-            )
-        else:
-            # Gộp tất cả synonyms cho single scene
-            all_synonyms = []
-            for s in steps:
-                if isinstance(s, list):
-                    all_synonyms.extend(s)
-                else:
-                    all_synonyms.append(s)
-            self.inspect(
-                query_vi=query_vi,
-                query_en_list=all_synonyms,
-                top_n=top_n
-            )
 
     def inspect(self, query_vi="", query_en_list=None, top_n=None):
         """
-        Mode 1: Synonyms / Single Scene Inspection
+        Tìm kiếm hình ảnh. Nếu chỉ nhập query_vi, hệ thống sẽ TỰ ĐỘNG DỊCH sang Tiếng Anh.
         """
+        # Xử lý tự động dịch nếu người dùng chỉ nhập Tiếng Việt
+        if (query_en_list is None or len(query_en_list) == 0) and query_vi:
+            print(f"🔄 Đang tự động dịch prompt Tiếng Việt bằng Local Model...")
+            # Hỗ trợ tách nhiều câu nếu phân cách bằng dấu phẩy
+            if isinstance(query_vi, str):
+                vi_splits = [q.strip() for q in query_vi.split(",") if q.strip()]
+            else:
+                vi_splits = query_vi
+
+            query_en_list = self.translate(vi_splits)
+            if isinstance(query_en_list, str):
+                query_en_list = [query_en_list]
+
+            print(f"✅ Bản dịch Tiếng Anh: {query_en_list}")
+
         if query_en_list is None:
             query_en_list = []
+
         top_n = top_n or self.viz_cfg.get("top_n", 6)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
 
+        # Sử dụng hàm inspect_query từ module visualize
         visualize.inspect_query(
             processor=self.processor,
             model=self.model,
@@ -188,7 +165,7 @@ class AICPipeline:
             manifest=self.manifest,
             global_map=self.global_map,
             metadata=self.metadata,
-            query_vi=query_vi,
+            query_vi=query_vi if isinstance(query_vi, str) else ", ".join(query_vi),
             query_en_list=query_en_list,
             top_n=top_n,
             base_kf_dir=self.base_kf_dir,
@@ -197,118 +174,27 @@ class AICPipeline:
             device=self.device,
         )
 
-    def inspect_sequential(self, steps_en_list, steps_vi_list=None, top_n=None, max_time_gap=None):
-        """
-        Mode 2: Sequential Actions / Timeline Inspection (hỗ trợ Synonyms cho từng bước)
-        """
-        top_n = top_n or self.viz_cfg.get("top_n", 6)
-        max_length = self.viz_cfg.get("max_length", 64)
-        vector_search_top_k = self.viz_cfg.get("sequential_search_top_k", 300)
-        max_time_gap = max_time_gap or self.viz_cfg.get("max_time_gap", 240)
-
-        visualize.inspect_sequential_query(
-            processor=self.processor,
-            model=self.model,
-            index=self.index,
-            manifest=self.manifest,
-            global_map=self.global_map,
-            metadata=self.metadata,
-            steps_en_list=steps_en_list,
-            steps_vi_list=steps_vi_list,
-            top_n=top_n,
-            base_kf_dir=self.base_kf_dir,
-            vector_search_top_k=vector_search_top_k,
-            max_time_gap=max_time_gap,
-            max_length=max_length,
-            device=self.device,
-        )
-
-    def interactive(self):
-        """
-        Menu tương tác trực quan ngay trong Notebook để chọn Mode và nhập query.
-        """
-        print("="*65)
-        print("🎯 AIC INTERACTIVE VIDEO SEARCH MENU")
-        print("  [0] 🤖 Auto-Search với Gemini Flash (Tự phân tích Prompt & Sinh Synonyms)")
-        print("  [1] Synonyms Mode (Cùng 1 cảnh / Đa góc nhìn / Vector Mean)")
-        print("  [2] Sequential Mode (Chuỗi hành động tuần tự + Synonyms từng bước)")
-        print("="*65)
-        mode = input("👉 Chọn Mode (0, 1 hoặc 2) [Mặc định: 0]: ").strip() or "0"
-
-        if mode == "0":
-            raw_input = input("\n📝 Dán nguyên đoạn query Tiếng Việt: ").strip()
-            self.auto_search(raw_input)
-            return
-
-        use_translate = input("🌐 Bạn có muốn nhập Tiếng Việt và tự động dịch sang Tiếng Anh? (y/n) [n]: ").strip().lower() == 'y'
-
-        if mode == "2":
-            print("\n--- 🎬 SEQUENTIAL MODE (Nhập từng bước hành động) ---")
-            n_steps = int(input("Số bước hành động (vd: 2 hoặc 3): ").strip() or "2")
-            steps_input = []
-            for s in range(n_steps):
-                step_text = input(f"  Nhập mô tả Bước {s+1} (hoặc các câu đồng nghĩa cách nhau bằng dấu phẩy ','): ").strip()
-                synonyms = [q.strip() for q in step_text.split(",") if q.strip()]
-                steps_input.append(synonyms if len(synonyms) > 1 else (synonyms[0] if synonyms else ""))
-
-            if use_translate:
-                print("🔄 Đang tự động dịch sang Tiếng Anh...")
-                steps_en = self.translate(steps_input)
-                print(f"-> Bản dịch: {steps_en}")
-                self.inspect_sequential(steps_en_list=steps_en, steps_vi_list=steps_input)
-            else:
-                self.inspect_sequential(steps_en_list=steps_input, steps_vi_list=steps_input)
-
-        else:
-            print("\n--- 🔎 SYNONYMS MODE (Mô tả cùng 1 cảnh) ---")
-            raw_input = input("Nhập câu query (hoặc các sub-query đồng nghĩa cách nhau bằng dấu phẩy ','): ").strip()
-            queries = [q.strip() for q in raw_input.split(",") if q.strip()]
-
-            if use_translate:
-                print("🔄 Đang tự động dịch sang Tiếng Anh...")
-                queries_en = self.translate(queries)
-                print(f"-> Bản dịch: {queries_en}")
-                self.inspect(query_vi=raw_input, query_en_list=queries_en)
-            else:
-                self.inspect(query_vi=raw_input, query_en_list=queries)
-
 
 def main():
     parser = argparse.ArgumentParser(description="AIC Video Search & Inspection Pipeline")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config.yaml")
-    parser.add_argument("--mode", type=str, choices=["auto", "synonyms", "sequential"], default="auto")
     parser.add_argument("--query_vi", type=str, default="", help="Vietnamese query description")
     parser.add_argument("--query_en", nargs="+", default=[], help="English query or sub-queries list")
-    parser.add_argument("--gemini_api_key", type=str, default=None, help="Gemini API Key")
-    parser.add_argument("--translate", action="store_true", help="Auto translate Vietnamese queries")
     parser.add_argument("--top_n", type=int, default=None, help="Top N results to inspect visually")
     args = parser.parse_args()
 
-    pipeline = AICPipeline(config_path=args.config, load_translation=args.translate, gemini_api_key=args.gemini_api_key)
+    pipeline = AICPipeline(config_path=args.config)
 
     if not args.query_en and not args.query_vi:
-        pipeline.interactive()
-        return
+        user_input = input("Nhập query (Tiếng Việt hoặc Tiếng Anh): ").strip()
+        if user_input:
+            args.query_vi = user_input
 
-    if args.mode == "auto" and args.query_vi:
-        pipeline.auto_search(args.query_vi, api_key=args.gemini_api_key, top_n=args.top_n)
-        return
-
-    if args.translate and args.query_vi and not args.query_en:
-        args.query_en = pipeline.translate(args.query_vi)
-
-    if args.mode == "sequential":
-        pipeline.inspect_sequential(
-            steps_en_list=args.query_en,
-            steps_vi_list=[args.query_vi] if args.query_vi else None,
-            top_n=args.top_n,
-        )
-    else:
-        pipeline.inspect(
-            query_vi=args.query_vi,
-            query_en_list=args.query_en,
-            top_n=args.top_n,
-        )
+    pipeline.inspect(
+        query_vi=args.query_vi,
+        query_en_list=args.query_en,
+        top_n=args.top_n,
+    )
 
 
 if __name__ == "__main__":
