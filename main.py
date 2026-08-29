@@ -15,12 +15,14 @@ from llm_expander import expand_query_with_gemini
 
 def hot_reload():
     """
-    Tải lại tức thì các module Python (visualize, dataset, model, llm_expander)
+    Tải lại tức thì các module Python (visualize, dataset, model, llm_expander, main)
     ngay trong phiên làm việc của Jupyter Notebook mà KHÔNG CẦN Restart Kernel!
     """
     import llm_expander
     for mod in [visualize, dataset, model, llm_expander]:
         importlib.reload(mod)
+    if "main" in sys.modules:
+        importlib.reload(sys.modules["main"])
     print("⚡ Hot-reload thành công! Tất cả code mới đã được cập nhật.")
 
 
@@ -131,6 +133,9 @@ class AICPipeline:
         Hot-reload mã nguồn mới nhất mà vẫn giữ nguyên Model & Index trong RAM.
         """
         hot_reload()
+        import main
+        self.__class__ = main.AICPipeline
+        print("⚡ Đã cập nhật methods của AICPipeline!")
 
     def auto_search(self, query_vi, api_key=None, top_n=None):
         """
