@@ -2,7 +2,6 @@ import os
 import json
 import numpy as np
 import faiss
-from rank_bm25 import BM25Okapi
 
 
 def load_dataset_and_metadata(siglip_dir):
@@ -34,14 +33,3 @@ def build_faiss_index(features):
     index.add(features)
     print("-> FAISS Index sẵn sàng!")
     return index
-
-
-def build_bm25_index(metadata):
-    """
-    Xây dựng BM25 cho Metadata Search.
-    """
-    video_ids = list(metadata.keys())
-    bm25_corpus = [metadata[v]["text_corpus"].split() for v in video_ids]
-    bm25_model = BM25Okapi(bm25_corpus)
-    print(f"-> Đã index BM25 cho {len(video_ids)} videos metadata.")
-    return video_ids, bm25_model

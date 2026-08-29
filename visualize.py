@@ -12,15 +12,11 @@ def inspect_query(
     manifest,
     global_map,
     metadata,
-    video_ids,
-    bm25_model,
     query_vi,
     query_en_list,
-    metadata_keywords="",
     top_n=6,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
     vector_search_top_k=200,
-    bm25_boost_weight=0.20,
     max_length=64,
     device="cuda",
     show_html=True,
@@ -44,17 +40,7 @@ def inspect_query(
     scores, indices = index.search(query_vec, vector_search_top_k)
     scores, indices = scores[0], indices[0]
 
-    # 3. BM25 Metadata Boosting
-    bm25_bonus = {}
-    if metadata_keywords.strip():
-        tokenized_kw = metadata_keywords.lower().split()
-        bm25_scores = bm25_model.get_scores(tokenized_kw)
-        max_b = max(bm25_scores) if max(bm25_scores) > 0 else 1.0
-        for vid, b_score in zip(video_ids, bm25_scores):
-            if b_score > 0:
-                bm25_bonus[vid] = (b_score / max_b) * bm25_boost_weight
-
-    # 4. Gom nhóm kết quả
+    # 3. Gom nhóm kết quả
     candidates = []
     seen_videos = {}
 
@@ -62,7 +48,7 @@ def inspect_query(
         kf_key = manifest[idx]  # Ví dụ: "L21_V001/005.jpg"
         v_id, kf_name = kf_key.split("/")
 
-        final_score = float(score) + bm25_bonus.get(v_id, 0.0)
+        final_score = float(score)
         map_info = global_map.get(kf_key, {})
 
         if isinstance(map_info, dict):
@@ -90,7 +76,7 @@ def inspect_query(
         print("Không tìm thấy kết quả phù hợp.")
         return
 
-    # 5. Khởi tạo lưới hiển thị 2 cột dọc (N hàng x 2 cột)
+    # 4. Khởi tạo lưới hiển thị 2 cột dọc (N hàng x 2 cột)
     n_cols = 2
     n_rows = (len(top_candidates) + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5 * n_rows))

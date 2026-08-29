@@ -1,5 +1,4 @@
 transformers
-rank_bm25
 faiss-gpu
 tqdm
 pandas
