@@ -10,4 +10,6 @@ visualization:
   max_videos_per_query: 2
   use_objects: true
   object_weight: 0.15
+  use_transcripts: true
+  transcript_weight: 0.35
 

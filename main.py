@@ -14,7 +14,7 @@ def hot_reload():
     Tải lại tức thì các module Python theo đúng thứ tự phụ thuộc (model -> dataset -> visualize -> export -> main).
     Xử lý an toàn khi đổi tên hàm, thêm/xóa module mà KHÔNG CẦN Restart Kernel!
     """
-    modules_order = ["model", "dataset", "visualize", "export", "main"]
+    modules_order = ["model", "dataset", "transcript", "visualize", "export", "main"]
     for mod_name in modules_order:
         if mod_name in sys.modules:
             try:
@@ -113,10 +113,9 @@ class AICPipeline:
         if "main" in sys.modules:
             self.__class__ = sys.modules["main"].AICPipeline
 
-    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None):
+    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None, use_transcripts=None, transcript_weight=None):
         """
-        Tìm kiếm và hiển thị kết quả trực quan cho một câu query Tiếng Anh (string).
-        Tự động áp dụng Object Re-ranking nếu có dữ liệu objects.
+        Tìm kiếm đa phương thức (SigLIP Vector + Objects + Speech Transcripts).
         Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
         if query is None or not str(query).strip():
@@ -131,6 +130,10 @@ class AICPipeline:
             use_objects = self.viz_cfg.get("use_objects", True)
         if object_weight is None:
             object_weight = self.viz_cfg.get("object_weight", 0.15)
+        if use_transcripts is None:
+            use_transcripts = self.viz_cfg.get("use_transcripts", True)
+        if transcript_weight is None:
+            transcript_weight = self.viz_cfg.get("transcript_weight", 0.35)
 
         visualize_mod = sys.modules.get("visualize", visualize)
         visualize_mod.inspect_query(
@@ -145,6 +148,8 @@ class AICPipeline:
             global_objects=self.global_objects,
             use_objects=use_objects,
             object_weight=object_weight,
+            use_transcripts=use_transcripts,
+            transcript_weight=transcript_weight,
             base_kf_dir=self.base_kf_dir,
             vector_search_top_k=vector_search_top_k,
             max_length=max_length,
@@ -153,7 +158,7 @@ class AICPipeline:
 
     def input(self):
         """
-        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Toggle Object Re-rank + Search Button).
+        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Toggles + Search Button).
         """
         try:
             import ipywidgets as widgets
@@ -161,9 +166,9 @@ class AICPipeline:
 
             query_box = widgets.Text(
                 value='',
-                placeholder='Nhập query tiếng Anh (ví dụ: two cyclists racing on road with car)...',
+                placeholder='Nhập query (tiếng Anh hoặc tiếng Việt)...',
                 description='🔍 Query:',
-                layout=widgets.Layout(width='55%')
+                layout=widgets.Layout(width='50%')
             )
 
             top_n_slider = widgets.IntSlider(
@@ -172,52 +177,58 @@ class AICPipeline:
                 max=20,
                 step=1,
                 description='Top N:',
-                layout=widgets.Layout(width='20%')
+                layout=widgets.Layout(width='18%')
             )
 
             chk_use_objects = widgets.Checkbox(
                 value=self.viz_cfg.get("use_objects", True),
-                description='🎯 Object Re-rank',
+                description='🎯 Objects',
                 indent=False,
-                layout=widgets.Layout(width='160px')
+                layout=widgets.Layout(width='100px')
+            )
+
+            chk_use_transcripts = widgets.Checkbox(
+                value=self.viz_cfg.get("use_transcripts", True),
+                description='🎙️ Transcripts',
+                indent=False,
+                layout=widgets.Layout(width='120px')
             )
 
             search_btn = widgets.Button(
-                description=' Search',
+                description='Tìm kiếm',
                 button_style='primary',
                 icon='search',
-                layout=widgets.Layout(width='110px')
+                layout=widgets.Layout(width='120px', height='36px')
             )
 
             output_area = widgets.Output()
 
-            def execute_search(_=None):
-                q = query_box.value.strip()
-                if not q:
-                    with output_area:
-                        clear_output()
-                        print("⚠️ Vui lòng nhập query tiếng Anh vào ô tìm kiếm!")
-                    return
+            def on_search_clicked(b):
                 with output_area:
-                    clear_output()
+                    clear_output(wait=True)
+                    q = query_box.value.strip()
+                    if not q:
+                        print("⚠️ Vui lòng nhập nội dung cần tìm kiếm.")
+                        return
                     self.inspect(
-                        query=q, 
-                        top_n=top_n_slider.value, 
-                        use_objects=chk_use_objects.value
+                        query=q,
+                        top_n=top_n_slider.value,
+                        use_objects=chk_use_objects.value,
+                        use_transcripts=chk_use_transcripts.value
                     )
 
-            search_btn.on_click(execute_search)
-            query_box.on_submit(execute_search)
+            search_btn.on_click(on_search_clicked)
+            query_box.on_submit(lambda _: on_search_clicked(None))
 
-            search_panel = widgets.VBox([
+            ui = widgets.VBox([
                 widgets.HBox(
-                    [query_box, top_n_slider, chk_use_objects, search_btn], 
+                    [query_box, top_n_slider, chk_use_objects, chk_use_transcripts, search_btn],
                     layout=widgets.Layout(align_items='center', margin='10px 0')
                 ),
                 output_area
             ])
-            display(search_panel)
-
+            display(ui)
+            return None
         except ImportError:
             q = input("Nhập query tiếng Anh: ").strip()
             if q:

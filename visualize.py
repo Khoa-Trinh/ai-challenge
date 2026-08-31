@@ -145,10 +145,10 @@ def calculate_object_match_score(frame_objs, query_entities):
     return score, matched
 
 
-def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, matched_objs, global_map, metadata, global_objects, base_kf_dir):
+def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, matched_objs, global_map, metadata, global_objects, base_kf_dir, matched_transcript=None):
     """
     Tạo Card trực quan tương tác có các nút ◀ Prev và Next ▶ để lùi / tiến keyframe theo thời gian thực,
-    đồng thời hiển thị thông tin Object Detections được phát hiện.
+    đồng thời hiển thị thông tin Object Detections và Video Speech Transcripts.
     """
     import ipywidgets as widgets
     from IPython.display import display, HTML, clear_output
@@ -180,7 +180,9 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, ma
         curr_kf_name = f"{kf_int:03d}.jpg"
         curr_key = f"{v_id}/{curr_kf_name}"
 
-        map_info = global_map.get(curr_key, {})
+        # Hỗ trợ cả keyframes_map trong cấu trúc mới
+        kf_map = global_map.get("keyframes_map", global_map) if isinstance(global_map, dict) else {}
+        map_info = kf_map.get(curr_key, {})
         if isinstance(map_info, dict):
             frame_idx = map_info.get("frame_idx", 0)
             pts_time = int(map_info.get("pts_time", 0.0))
@@ -188,7 +190,12 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, ma
             frame_idx = map_info if map_info else 0
             pts_time = 0
 
-        timestamp_link = f"{yt_url}&t={pts_time}s" if yt_url else "#"
+        # Nếu có mốc giây từ transcript match thì ưu tiên
+        target_yt_time = pts_time
+        if matched_transcript and "start_sec" in matched_transcript:
+            target_yt_time = int(matched_transcript["start_sec"])
+
+        timestamp_link = f"{yt_url}&t={target_yt_time}s" if yt_url else "#"
         img_path = find_keyframe_image_path(base_kf_dir, v_id, curr_kf_name)
 
         # Lấy Objects của frame hiện tại
@@ -214,6 +221,17 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, ma
             objects_display = "".join(objects_html_list)
         else:
             objects_display = """<span style="color: #64748b; font-size: 13px; font-style: italic;">Không có detections</span>"""
+
+        transcript_display_html = ""
+        if matched_transcript:
+            t_sec = matched_transcript.get("start_sec", 0)
+            t_text = matched_transcript.get("text", "")
+            transcript_display_html = f"""
+            <div style="margin-bottom: 12px; background: #422006; border: 1px solid #eab308; border-radius: 8px; padding: 10px 14px; color: #fef08a;">
+                <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">🎙️ Khớp Lời Thoại / Transcript tại giây {t_sec}s:</div>
+                <div style="font-size: 15px; font-style: italic; color: #ffffff;">"{t_text}"</div>
+            </div>
+            """
 
         lbl_frame_indicator.value = f"""
         <span style="font-size: 16px; font-weight: bold; color: #38bdf8; background: #0f172a; padding: 6px 14px; border-radius: 6px; border: 1px solid #334155;">
@@ -264,6 +282,9 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, ma
 
             <!-- 3. KHUNG THÔNG TIN CHI TIẾT -->
             <div style="background: #1e293b; color: #f8fafc; border-radius: 0 0 12px 12px; padding: 18px 24px; font-size: 16px; line-height: 1.6; border: 1px solid #334155; border-top: none;">
+                
+                {transcript_display_html}
+
                 <div style="margin-bottom: 8px;">
                     <b style="color: #94a3b8;">📌 Video Title:</b> <span style="color: #f1f5f9; font-weight: 600; font-size: 17px;">{title}</span>
                 </div>
@@ -285,7 +306,7 @@ def create_interactive_card(rank, v_id, initial_kf_name, score, siglip_score, ma
                 <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #334155;">
                     <a href="{timestamp_link}" target="_blank" 
                        style="display: inline-block; background: #dc2626; color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; font-size: 15px; box-shadow: 0 4px 12px rgba(220,38,38,0.4);">
-                        ▶ Xem Video trên YouTube tại {pts_time}s
+                        ▶ Xem Video trên YouTube tại {target_yt_time}s
                     </a>
                 </div>
             </div>
@@ -329,6 +350,8 @@ def inspect_query(
     global_objects=None,
     use_objects=True,
     object_weight=0.15,
+    use_transcripts=True,
+    transcript_weight=0.35,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
     vector_search_top_k=200,
     max_length=64,
@@ -336,12 +359,12 @@ def inspect_query(
     show_html=True,
 ):
     """
-    Tìm kiếm câu query Tiếng Anh (dạng string), tự động Re-rank bằng Object Detections
-    và hiển thị kết quả trực quan dạng thẻ lớn kèm nút Prev/Next Frame.
+    Tìm kiếm đa phương thức (SigLIP Vector + YOLO-World Objects + Speech Transcripts),
+    tự động Re-rank và hiển thị kết quả trực quan dạng thẻ lớn kèm nút Prev/Next Frame.
     """
     query_en = str(query_en).strip()
     if not query_en:
-        print("⚠️ Query rỗng, vui lòng nhập chuỗi mô tả tiếng Anh.")
+        print("⚠️ Query rỗng, vui lòng nhập chuỗi mô tả.")
         return
 
     print(f"🔎 Đang tìm kiếm: \"{query_en}\"")
@@ -367,9 +390,28 @@ def inspect_query(
         if query_entities:
             print(f"🎯 Thực thể đối soát Objects: {', '.join(sorted(query_entities))}")
 
+    # 4. Transcript Search (Tìm kiếm phụ đề lời thoại)
+    matched_transcripts_by_key = {}
+    if use_transcripts and metadata:
+        try:
+            import transcript as ts_mod
+            ts_matches = ts_mod.search_transcripts(metadata, query_en, global_map, max_results=8)
+            if ts_matches:
+                print(f"🎙️ Tìm thấy {len(ts_matches)} đoạn thoại khớp trong Speech Transcripts!")
+                for m in ts_matches:
+                    matched_transcripts_by_key[m["key"]] = m
+        except Exception as e:
+            pass
+
+    kf_map = global_map.get("keyframes_map", global_map) if isinstance(global_map, dict) else {}
+
     raw_candidates = []
+    seen_keys = set()
+
+    # Thêm các candidates từ SigLIP Vector Search
     for score, idx in zip(scores, indices):
         kf_key = manifest[idx]
+        seen_keys.add(kf_key)
         v_id, kf_name = kf_key.split("/")
 
         siglip_score = float(score)
@@ -380,15 +422,19 @@ def inspect_query(
             frame_objs = global_objects.get(kf_key, {})
             obj_match_score, matched_objs = calculate_object_match_score(frame_objs, query_entities)
 
-        # Tính điểm kết hợp (SigLIP + Object Bonus)
-        final_score = siglip_score + (object_weight * min(obj_match_score, 1.5))
+        # Transcript Bonus nếu khớp
+        ts_match = matched_transcripts_by_key.get(kf_key)
+        ts_bonus = (transcript_weight * ts_match["score"]) if ts_match else 0.0
 
-        map_info = global_map.get(kf_key, {})
+        # Điểm kết hợp đa phương thức: SigLIP + Object + Transcript
+        final_score = siglip_score + (object_weight * min(obj_match_score, 1.5)) + ts_bonus
+
+        map_info = kf_map.get(kf_key, {})
         if isinstance(map_info, dict):
             frame_idx = map_info.get("frame_idx", 0)
             pts_time = map_info.get("pts_time", 0.0)
         else:
-            frame_idx = map_info
+            frame_idx = map_info if map_info else 0
             pts_time = 0.0
 
         raw_candidates.append({
@@ -400,13 +446,42 @@ def inspect_query(
             "siglip_score": siglip_score,
             "final_score": final_score,
             "matched_objs": matched_objs,
-            "obj_match_score": obj_match_score
+            "obj_match_score": obj_match_score,
+            "matched_transcript": ts_match
         })
+
+    # Nếu có Transcript Match chưa nằm trong top SigLIP, inject trực tiếp lên top
+    for key, ts_match in matched_transcripts_by_key.items():
+        if key not in seen_keys:
+            v_id = ts_match["v_id"]
+            kf_name = ts_match["kf_name"]
+            map_info = kf_map.get(key, {})
+            if isinstance(map_info, dict):
+                frame_idx = map_info.get("frame_idx", 0)
+                pts_time = map_info.get("pts_time", ts_match.get("start_sec", 0.0))
+            else:
+                frame_idx = map_info if map_info else 0
+                pts_time = ts_match.get("start_sec", 0.0)
+
+            # Điểm ưu tiên cao cho Transcript Exact Match
+            injected_score = 0.25 + (transcript_weight * ts_match["score"])
+            raw_candidates.append({
+                "kf_key": key,
+                "video": v_id,
+                "kf_name": kf_name,
+                "frame_idx": frame_idx,
+                "pts_time": pts_time,
+                "siglip_score": 0.20,
+                "final_score": injected_score,
+                "matched_objs": {},
+                "obj_match_score": 0.0,
+                "matched_transcript": ts_match
+            })
 
     # Sắp xếp lại theo điểm kết hợp Final Score
     raw_candidates.sort(key=lambda x: x["final_score"], reverse=True)
 
-    # 4. Gom nhóm kết quả (tối đa 2 frame / video)
+    # 5. Gom nhóm kết quả (tối đa 2 frame / video)
     candidates = []
     seen_videos = {}
     for cand in raw_candidates:
@@ -421,7 +496,7 @@ def inspect_query(
         print("❌ Không tìm thấy kết quả phù hợp.")
         return
 
-    # 5. Hiển thị từng Card có nút chuyển Frame linh hoạt
+    # 6. Hiển thị từng Card có nút chuyển Frame linh hoạt & Badges
     try:
         import ipywidgets as widgets
         from IPython.display import display
@@ -435,6 +510,7 @@ def inspect_query(
         final_score = cand["final_score"]
         siglip_score = cand["siglip_score"]
         matched_objs = cand["matched_objs"]
+        matched_ts = cand.get("matched_transcript")
 
         if use_widgets and show_html:
             card_widget = create_interactive_card(
@@ -448,6 +524,7 @@ def inspect_query(
                 metadata=metadata,
                 global_objects=global_objects,
                 base_kf_dir=base_kf_dir,
+                matched_transcript=matched_ts
             )
             display(card_widget)
         else:
@@ -456,5 +533,7 @@ def inspect_query(
             meta = metadata.get(v_id, {})
             yt_url = meta.get("watch_url", "")
             timestamp_link = f"{yt_url}&t={pts_time}s" if yt_url else "#"
-            print(f"Top {i+1}: {v_id}/{kf_name} | Score: {final_score:.4f} (SigLIP: {siglip_score:.4f}) | Frame: {frame_idx} | Time: {pts_time}s | {timestamp_link}")
+            ts_info = f" | 🎙️ Transcript: {matched_ts['text']}" if matched_ts else ""
+            print(f"Top {i+1}: {v_id}/{kf_name} | Score: {final_score:.4f} (SigLIP: {siglip_score:.4f}) | Frame: {frame_idx} | Time: {pts_time}s{ts_info} | {timestamp_link}")
+
 
