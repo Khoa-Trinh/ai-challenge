@@ -116,12 +116,15 @@ class AICPipeline:
         if "main" in sys.modules:
             self.__class__ = sys.modules["main"].AICPipeline
 
-    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None, use_inverted=None, use_transcripts=None, transcript_weight=None):
+    def inspect(self, query: str = None, query_en: str = None, query_vn: str = None, top_n=None, use_objects=None, object_weight=None, use_inverted=None, use_transcripts=None, transcript_weight=None):
         """
-        Tìm kiếm đa phương thức (SigLIP Vector + Objects + Inverted Boost + Speech Transcripts).
+        Tìm kiếm đa phương thức (SigLIP Vector + Objects qua query_en; Speech Transcripts qua query_vn).
         Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
-        if query is None or not str(query).strip():
+        q_en = query_en or query
+        q_vn = query_vn
+
+        if (q_en is None or not str(q_en).strip()) and (q_vn is None or not str(q_vn).strip()):
             self.input()
             return
 
@@ -148,7 +151,8 @@ class AICPipeline:
             manifest=self.manifest,
             global_map=self.global_map,
             metadata=self.metadata,
-            query_en=str(query).strip(),
+            query_en=str(q_en).strip() if q_en else "",
+            query_vn=str(q_vn).strip() if q_vn else "",
             top_n=top_n,
             global_objects=self.global_objects if use_objects else None,
             inverted_objects=self.inverted_objects if use_inverted else None,
@@ -164,21 +168,32 @@ class AICPipeline:
 
     def input(self):
         """
-        Mở giao diện UI tìm kiếm trực quan 2 dòng (Row 1: Search Bar lớn, Row 2: Toggles & Nút Tìm kiếm).
+        Mở giao diện UI tìm kiếm trực quan 3 dòng:
+        - Row 1: English Query cho SigLIP & Objects
+        - Row 2: Vietnamese Query cho Speech Transcripts
+        - Row 3: Top N Slider, Toggles & Nút Tìm kiếm
         """
         try:
             import ipywidgets as widgets
             from IPython.display import display, clear_output
 
-            # DÒNG 1: Ô nhập Query lớn trải dài
-            query_box = widgets.Text(
+            # DÒNG 1: Ô nhập Query tiếng Anh (SigLIP & Objects)
+            en_query_box = widgets.Text(
                 value='',
-                placeholder='Nhập mô tả tìm kiếm (tiếng Anh hoặc tiếng Việt)...',
-                description='🔍 Query:',
+                placeholder='Mô tả tiếng Anh cho Hình ảnh & Objects (ví dụ: chef preparing and cooking fish on cutting board)...',
+                description='🇬🇧 English:',
                 layout=widgets.Layout(width='100%')
             )
 
-            # DÒNG 2: Các nút điều khiển & Toggles (Default False, Top N = 10)
+            # DÒNG 2: Ô nhập Query tiếng Việt (Speech Transcripts)
+            vn_query_box = widgets.Text(
+                value='',
+                placeholder='Từ khóa / Lời thoại tiếng Việt cho Transcripts (ví dụ: cực quang, đàn hổ con, COVID-19)...',
+                description='🇻🇳 Tiếng Việt:',
+                layout=widgets.Layout(width='100%')
+            )
+
+            # DÒNG 3: Các nút điều khiển & Toggles (Default False, Top N = 10)
             top_n_slider = widgets.IntSlider(
                 value=self.viz_cfg.get("top_n", 10),
                 min=1,
@@ -221,12 +236,14 @@ class AICPipeline:
             def on_search_clicked(b):
                 with output_area:
                     clear_output(wait=True)
-                    q = query_box.value.strip()
-                    if not q:
-                        print("⚠️ Vui lòng nhập nội dung cần tìm kiếm.")
+                    q_en = en_query_box.value.strip()
+                    q_vn = vn_query_box.value.strip()
+                    if not q_en and not q_vn:
+                        print("⚠️ Vui lòng nhập ít nhất một câu mô tả tiếng Anh hoặc từ khóa tiếng Việt.")
                         return
                     self.inspect(
-                        query=q,
+                        query_en=q_en,
+                        query_vn=q_vn,
                         top_n=top_n_slider.value,
                         use_objects=chk_use_objects.value,
                         use_inverted=chk_use_inverted.value,
@@ -234,15 +251,17 @@ class AICPipeline:
                     )
 
             search_btn.on_click(on_search_clicked)
-            query_box.on_submit(lambda _: on_search_clicked(None))
+            en_query_box.on_submit(lambda _: on_search_clicked(None))
+            vn_query_box.on_submit(lambda _: on_search_clicked(None))
 
-            row1 = widgets.HBox([query_box], layout=widgets.Layout(width='100%', margin='0 0 10px 0'))
-            row2 = widgets.HBox(
+            row1 = widgets.HBox([en_query_box], layout=widgets.Layout(width='100%', margin='0 0 8px 0'))
+            row2 = widgets.HBox([vn_query_box], layout=widgets.Layout(width='100%', margin='0 0 10px 0'))
+            row3 = widgets.HBox(
                 [top_n_slider, chk_use_objects, chk_use_inverted, chk_use_transcripts, search_btn],
                 layout=widgets.Layout(align_items='center', margin='0 0 15px 0')
             )
 
-            ui = widgets.VBox([row1, row2, output_area])
+            ui = widgets.VBox([row1, row2, row3, output_area])
             display(ui)
             return None
         except ImportError:

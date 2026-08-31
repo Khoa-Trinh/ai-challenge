@@ -291,13 +291,14 @@ def inspect_query(
     manifest,
     global_map,
     metadata,
-    query_en: str,
-    top_n=6,
+    query_en: str = None,
+    query_vn: str = None,
+    top_n=10,
     global_objects=None,
     inverted_objects=None,
-    use_objects=True,
+    use_objects=False,
     object_weight=0.15,
-    use_transcripts=True,
+    use_transcripts=False,
     transcript_weight=0.35,
     base_kf_dir="/kaggle/input/datasets/nguynhuyds/aic-dataset",
     vector_search_top_k=200,
@@ -306,21 +307,31 @@ def inspect_query(
     show_html=True,
 ):
     """
-    Tìm kiếm đa phương thức (SigLIP Vector + YOLO-World Objects + Speech Transcripts),
-    tự động Re-rank và hiển thị kết quả trực quan dạng thẻ lớn kèm nút Prev/Next Frame.
+    Tìm kiếm đa phương thức (SigLIP Vector + YOLO-World Objects qua query_en; Speech Transcripts qua query_vn).
     """
-    query_en = str(query_en).strip()
-    if not query_en:
-        print("⚠️ Query rỗng, vui lòng nhập chuỗi mô tả.")
+    q_en = str(query_en or "").strip()
+    q_vn = str(query_vn or "").strip()
+
+    if not q_en and not q_vn:
+        print("⚠️ Vui lòng nhập ít nhất một query tiếng Anh hoặc tiếng Việt.")
         return
 
-    print(f"🔎 Đang tìm kiếm: \"{query_en}\"")
+    # Nếu chỉ có 1 trong 2, fallback sang nhau khi cần
+    effective_en = q_en if q_en else q_vn
+    effective_vn = q_vn if q_vn else q_en
 
-    # 1. Encode text query đơn
+    info_str = []
+    if q_en:
+        info_str.append(f'🇬🇧 Vision/Objects: "{q_en}"')
+    if q_vn:
+        info_str.append(f'🇻🇳 Transcripts: "{q_vn}"')
+    print(f"🔎 Tìm kiếm: {' | '.join(info_str)}")
+
+    # 1. Encode text query cho SigLIP (dùng tiếng Anh)
     query_vec = model.encode_text_query(
         processor,
         model_obj,
-        query_en,
+        effective_en,
         device=device,
         max_length=max_length,
         truncation=True,
@@ -330,19 +341,19 @@ def inspect_query(
     scores, indices = index.search(query_vec, vector_search_top_k)
     scores, indices = scores[0], indices[0]
 
-    # 3. Object-Aware Re-ranking
+    # 3. Object-Aware Re-ranking (dùng tiếng Anh)
     query_entities = set()
     if use_objects and (global_objects or inverted_objects):
-        query_entities = extract_query_entities(query_en, inverted_objects=inverted_objects, global_objects=global_objects)
+        query_entities = extract_query_entities(effective_en, inverted_objects=inverted_objects, global_objects=global_objects)
         if query_entities:
             print(f"🎯 Thực thể đối soát Objects: {', '.join(sorted(query_entities))}")
 
-    # 4. Transcript Search (Tìm kiếm phụ đề lời thoại)
+    # 4. Transcript Search (dùng câu tiếng Việt chính xác)
     matched_transcripts_by_key = {}
-    if use_transcripts and metadata:
+    if use_transcripts and metadata and effective_vn:
         try:
             import transcript as ts_mod
-            ts_matches = ts_mod.search_transcripts(metadata, query_en, global_map, max_results=8)
+            ts_matches = ts_mod.search_transcripts(metadata, effective_vn, global_map, max_results=8)
             if ts_matches:
                 print(f"🎙️ Tìm thấy {len(ts_matches)} đoạn thoại khớp trong Speech Transcripts!")
                 for m in ts_matches:
