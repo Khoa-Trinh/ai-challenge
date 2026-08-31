@@ -116,25 +116,27 @@ class AICPipeline:
         if "main" in sys.modules:
             self.__class__ = sys.modules["main"].AICPipeline
 
-    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None, use_transcripts=None, transcript_weight=None):
+    def inspect(self, query: str = None, top_n=None, use_objects=None, object_weight=None, use_inverted=None, use_transcripts=None, transcript_weight=None):
         """
-        Tìm kiếm đa phương thức (SigLIP Vector + Objects + Speech Transcripts).
+        Tìm kiếm đa phương thức (SigLIP Vector + Objects + Inverted Boost + Speech Transcripts).
         Nếu không truyền query, sẽ tự động mở giao diện interactive input UI.
         """
         if query is None or not str(query).strip():
             self.input()
             return
 
-        top_n = top_n or self.viz_cfg.get("top_n", 6)
+        top_n = top_n or self.viz_cfg.get("top_n", 10)
         max_length = self.viz_cfg.get("max_length", 64)
         vector_search_top_k = self.viz_cfg.get("vector_search_top_k", 200)
         
         if use_objects is None:
-            use_objects = self.viz_cfg.get("use_objects", True)
+            use_objects = self.viz_cfg.get("use_objects", False)
         if object_weight is None:
             object_weight = self.viz_cfg.get("object_weight", 0.15)
+        if use_inverted is None:
+            use_inverted = self.viz_cfg.get("use_inverted", False)
         if use_transcripts is None:
-            use_transcripts = self.viz_cfg.get("use_transcripts", True)
+            use_transcripts = self.viz_cfg.get("use_transcripts", False)
         if transcript_weight is None:
             transcript_weight = self.viz_cfg.get("transcript_weight", 0.35)
 
@@ -148,9 +150,9 @@ class AICPipeline:
             metadata=self.metadata,
             query_en=str(query).strip(),
             top_n=top_n,
-            global_objects=self.global_objects,
-            inverted_objects=self.inverted_objects,
-            use_objects=use_objects,
+            global_objects=self.global_objects if use_objects else None,
+            inverted_objects=self.inverted_objects if use_inverted else None,
+            use_objects=use_objects or use_inverted,
             object_weight=object_weight,
             use_transcripts=use_transcripts,
             transcript_weight=transcript_weight,
@@ -162,47 +164,56 @@ class AICPipeline:
 
     def input(self):
         """
-        Mở giao diện UI tìm kiếm trực quan bằng Widgets (Interactive Search Bar + Slider + Toggles + Search Button).
+        Mở giao diện UI tìm kiếm trực quan 2 dòng (Row 1: Search Bar lớn, Row 2: Toggles & Nút Tìm kiếm).
         """
         try:
             import ipywidgets as widgets
             from IPython.display import display, clear_output
 
+            # DÒNG 1: Ô nhập Query lớn trải dài
             query_box = widgets.Text(
                 value='',
-                placeholder='Nhập query (tiếng Anh hoặc tiếng Việt)...',
+                placeholder='Nhập mô tả tìm kiếm (tiếng Anh hoặc tiếng Việt)...',
                 description='🔍 Query:',
-                layout=widgets.Layout(width='50%')
+                layout=widgets.Layout(width='100%')
             )
 
+            # DÒNG 2: Các nút điều khiển & Toggles (Default False, Top N = 10)
             top_n_slider = widgets.IntSlider(
-                value=self.viz_cfg.get("top_n", 6),
+                value=self.viz_cfg.get("top_n", 10),
                 min=1,
-                max=20,
+                max=50,
                 step=1,
                 description='Top N:',
-                layout=widgets.Layout(width='18%')
+                layout=widgets.Layout(width='200px')
             )
 
             chk_use_objects = widgets.Checkbox(
-                value=self.viz_cfg.get("use_objects", True),
+                value=self.viz_cfg.get("use_objects", False),
                 description='🎯 Objects',
                 indent=False,
                 layout=widgets.Layout(width='100px')
             )
 
+            chk_use_inverted = widgets.Checkbox(
+                value=self.viz_cfg.get("use_inverted", False),
+                description='🔄 Inverted',
+                indent=False,
+                layout=widgets.Layout(width='105px')
+            )
+
             chk_use_transcripts = widgets.Checkbox(
-                value=self.viz_cfg.get("use_transcripts", True),
+                value=self.viz_cfg.get("use_transcripts", False),
                 description='🎙️ Transcripts',
                 indent=False,
-                layout=widgets.Layout(width='120px')
+                layout=widgets.Layout(width='125px')
             )
 
             search_btn = widgets.Button(
-                description='Tìm kiếm',
+                description=' Tìm kiếm',
                 button_style='primary',
                 icon='search',
-                layout=widgets.Layout(width='120px', height='36px')
+                layout=widgets.Layout(width='130px', height='36px')
             )
 
             output_area = widgets.Output()
@@ -218,23 +229,24 @@ class AICPipeline:
                         query=q,
                         top_n=top_n_slider.value,
                         use_objects=chk_use_objects.value,
+                        use_inverted=chk_use_inverted.value,
                         use_transcripts=chk_use_transcripts.value
                     )
 
             search_btn.on_click(on_search_clicked)
             query_box.on_submit(lambda _: on_search_clicked(None))
 
-            ui = widgets.VBox([
-                widgets.HBox(
-                    [query_box, top_n_slider, chk_use_objects, chk_use_transcripts, search_btn],
-                    layout=widgets.Layout(align_items='center', margin='10px 0')
-                ),
-                output_area
-            ])
+            row1 = widgets.HBox([query_box], layout=widgets.Layout(width='100%', margin='0 0 10px 0'))
+            row2 = widgets.HBox(
+                [top_n_slider, chk_use_objects, chk_use_inverted, chk_use_transcripts, search_btn],
+                layout=widgets.Layout(align_items='center', margin='0 0 15px 0')
+            )
+
+            ui = widgets.VBox([row1, row2, output_area])
             display(ui)
             return None
         except ImportError:
-            q = input("Nhập query tiếng Anh: ").strip()
+            q = input("Nhập query: ").strip()
             if q:
                 self.inspect(query=q)
 

@@ -4,12 +4,14 @@ base_kf_dir: "/kaggle/input/datasets/nguynhuyds/aic-dataset"
 device: "cuda"
 
 visualization:
-  top_n: 6
+  top_n: 10
   max_length: 64
   vector_search_top_k: 200
   max_videos_per_query: 2
-  use_objects: true
+  use_objects: false
   object_weight: 0.15
-  use_transcripts: true
+  use_inverted: false
+  use_transcripts: false
   transcript_weight: 0.35
+
 

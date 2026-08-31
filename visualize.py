@@ -32,94 +32,40 @@ def find_keyframe_image_path(base_kf_dir, v_id, kf_name):
     return None
 
 
-def extract_query_entities(query_en):
+def extract_query_entities(query_en, inverted_objects=None, global_objects=None):
     """
-    Trích xuất danh sách các thực thể / từ khóa vật thể từ câu query tiếng Anh để đối soát với OpenImages / Global Objects.
+    Tự động trích xuất các đồ vật từ câu query khớp trực tiếp với kho từ vựng của YOLO-World v2-X.
+    Hỗ trợ chuẩn xác cả từ đơn lẫn cụm từ ghép (như 'chopping board', 'traffic light', 'camera lens', 'green chili').
     """
+    if not query_en:
+        return set()
+
     import re
-    cleaned = re.sub(r'[^a-zA-Z0-9\s]', ' ', query_en.lower())
-    words = [w for w in cleaned.split() if len(w) > 2]
-    
-    # Từ dừng (stopwords) phổ biến trong mô tả hình ảnh
-    stopwords = {
-        "the", "and", "with", "this", "that", "there", "from", "into", "onto", "over", 
-        "under", "near", "next", "behind", "front", "side", "view", "scene", "video", 
-        "clip", "frame", "showing", "shows", "look", "looks", "looking", "take", "takes", 
-        "taking", "color", "colors", "colored", "background", "foreground", "photo", 
-        "picture", "image", "first", "last", "then", "after", "before", "many", "some"
-    }
-    
-    # Từ đồng nghĩa / ánh xạ sang OpenImages Entities
-    synonym_map = {
-        "cyclist": ["person", "bicycle", "vehicle"],
-        "cyclists": ["person", "bicycle", "vehicle"],
-        "biker": ["person", "motorcycle", "bicycle", "vehicle"],
-        "bikers": ["person", "motorcycle", "bicycle", "vehicle"],
-        "bicycle": ["bicycle", "vehicle"],
-        "bicycles": ["bicycle", "vehicle"],
-        "bike": ["bicycle", "motorcycle", "vehicle"],
-        "bikes": ["bicycle", "motorcycle", "vehicle"],
-        "motorbike": ["motorcycle", "vehicle"],
-        "motorcycle": ["motorcycle", "vehicle"],
-        "car": ["car", "land vehicle", "vehicle"],
-        "cars": ["car", "land vehicle", "vehicle"],
-        "automobile": ["car", "land vehicle", "vehicle"],
-        "boat": ["boat", "watercraft", "vehicle"],
-        "boats": ["boat", "watercraft", "vehicle"],
-        "ship": ["boat", "watercraft", "vehicle"],
-        "chef": ["person", "clothing"],
-        "cook": ["person", "food", "table"],
-        "man": ["person", "man"],
-        "men": ["person", "man"],
-        "woman": ["person", "woman"],
-        "women": ["person", "woman"],
-        "boy": ["person", "man", "boy"],
-        "girl": ["person", "woman", "girl"],
-        "child": ["person", "boy", "girl"],
-        "children": ["person", "boy", "girl"],
-        "people": ["person", "man", "woman"],
-        "fish": ["fish", "seafood", "animal"],
-        "fishes": ["fish", "seafood", "animal"],
-        "rhino": ["rhinoceros", "animal"],
-        "rhinoceros": ["rhinoceros", "animal"],
-        "monkey": ["monkey", "animal"],
-        "monkeys": ["monkey", "animal"],
-        "building": ["building", "skyscraper", "tower"],
-        "buildings": ["building", "skyscraper", "tower"],
-        "house": ["building", "house"],
-        "tower": ["tower", "building", "skyscraper"],
-        "bridge": ["bridge", "building"],
-        "tree": ["tree", "plant"],
-        "trees": ["tree", "plant"],
-        "plant": ["plant", "flower", "tree"],
-        "plants": ["plant", "flower", "tree"],
-        "table": ["table", "furniture", "desk"],
-        "chair": ["chair", "furniture"],
-        "balloon": ["balloon", "toy"],
-        "balloons": ["balloon", "toy"],
-        "lantern": ["lantern", "lamp", "lighting"],
-        "lamp": ["lamp", "street light", "lighting"],
-        "drum": ["drum", "musical instrument"],
-        "flag": ["flag", "poster"],
-        "hat": ["hat", "fashion accessory", "clothing"],
-        "helmet": ["helmet", "fashion accessory", "clothing"],
-    }
-    
-    query_entities = set()
-    for w in words:
-        if w not in stopwords:
-            query_entities.add(w)
-            # Thử bỏ s hoặc es số nhiều
-            if w.endswith("es") and len(w) > 4:
-                query_entities.add(w[:-2])
-            elif w.endswith("s") and len(w) > 3:
-                query_entities.add(w[:-1])
-                
-            if w in synonym_map:
-                for mapped in synonym_map[w]:
-                    query_entities.add(mapped)
-                    
-    return query_entities
+    cleaned_query = re.sub(r'[^a-zA-Z0-9\s]', ' ', query_en.lower())
+    query_padded = f" {' '.join(cleaned_query.split())} "
+    matched_entities = set()
+
+    vocab_keys = []
+    if inverted_objects and isinstance(inverted_objects, dict):
+        vocab_keys = list(inverted_objects.keys())
+    elif global_objects and isinstance(global_objects, dict):
+        seen_tags = set()
+        for v in list(global_objects.values())[:1000]:
+            if isinstance(v, dict):
+                seen_tags.update(v.keys())
+            elif isinstance(v, list):
+                seen_tags.update(v)
+        vocab_keys = list(seen_tags)
+
+    for tag in vocab_keys:
+        tag_clean = re.sub(r'[^a-zA-Z0-9\s]', ' ', tag.lower()).strip()
+        if not tag_clean:
+            continue
+        # Khớp nguyên từ / cụm từ chính xác (hỗ trợ cả dạng số nhiều s/es)
+        if f" {tag_clean} " in query_padded or f" {tag_clean}s " in query_padded or f" {tag_clean}es " in query_padded:
+            matched_entities.add(tag)
+
+    return matched_entities
 
 
 def calculate_object_match_score(frame_objs, query_entities):
@@ -386,8 +332,8 @@ def inspect_query(
 
     # 3. Object-Aware Re-ranking
     query_entities = set()
-    if use_objects and global_objects:
-        query_entities = extract_query_entities(query_en)
+    if use_objects and (global_objects or inverted_objects):
+        query_entities = extract_query_entities(query_en, inverted_objects=inverted_objects, global_objects=global_objects)
         if query_entities:
             print(f"🎯 Thực thể đối soát Objects: {', '.join(sorted(query_entities))}")
 
