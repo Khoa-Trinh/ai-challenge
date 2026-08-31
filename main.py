@@ -52,6 +52,7 @@ class AICPipeline:
     _cached_global_map = None
     _cached_metadata = None
     _cached_global_objects = None
+    _cached_inverted_objects = None
     _cached_index = None
 
     def __init__(self, config_path="config.yaml", reuse_cache=True, **kwargs):
@@ -89,13 +90,15 @@ class AICPipeline:
             self.global_map = AICPipeline._cached_global_map
             self.metadata = AICPipeline._cached_metadata
             self.global_objects = AICPipeline._cached_global_objects
+            self.inverted_objects = AICPipeline._cached_inverted_objects
         else:
-            self.features, self.manifest, self.global_map, self.metadata, self.global_objects = dataset.load_dataset_and_metadata(self.data_compile_dir)
+            self.features, self.manifest, self.global_map, self.metadata, self.global_objects, self.inverted_objects = dataset.load_dataset_and_metadata(self.data_compile_dir)
             AICPipeline._cached_features = self.features
             AICPipeline._cached_manifest = self.manifest
             AICPipeline._cached_global_map = self.global_map
             AICPipeline._cached_metadata = self.metadata
             AICPipeline._cached_global_objects = self.global_objects
+            AICPipeline._cached_inverted_objects = self.inverted_objects
 
         # 3. FAISS Index (Dùng lại nếu đã có trong RAM)
         if reuse_cache and AICPipeline._cached_index is not None:
@@ -146,6 +149,7 @@ class AICPipeline:
             query_en=str(query).strip(),
             top_n=top_n,
             global_objects=self.global_objects,
+            inverted_objects=self.inverted_objects,
             use_objects=use_objects,
             object_weight=object_weight,
             use_transcripts=use_transcripts,

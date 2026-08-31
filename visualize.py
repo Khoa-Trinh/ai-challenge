@@ -348,6 +348,7 @@ def inspect_query(
     query_en: str,
     top_n=6,
     global_objects=None,
+    inverted_objects=None,
     use_objects=True,
     object_weight=0.15,
     use_transcripts=True,
@@ -477,6 +478,42 @@ def inspect_query(
                 "obj_match_score": 0.0,
                 "matched_transcript": ts_match
             })
+
+    # Nếu có Inverted Objects Match với độ tự tin cao chưa nằm trong top SigLIP, inject vào candidates
+    if use_objects and inverted_objects and query_entities:
+        for q_ent in query_entities:
+            matching_frames = inverted_objects.get(q_ent, {})
+            if isinstance(matching_frames, dict):
+                # Lấy các frame có confidence cao nhất cho object này
+                for kf_k, conf in sorted(matching_frames.items(), key=lambda x: x[1], reverse=True)[:6]:
+                    if kf_k not in seen_keys and conf >= 0.45:
+                        seen_keys.add(kf_k)
+                        if "/" in kf_k:
+                            v_id, kf_name = kf_k.split("/", 1)
+                        else:
+                            continue
+
+                        map_info = kf_map.get(kf_k, {})
+                        if isinstance(map_info, dict):
+                            frame_idx = map_info.get("frame_idx", 0)
+                            pts_time = map_info.get("pts_time", 0.0)
+                        else:
+                            frame_idx = map_info if map_info else 0
+                            pts_time = 0.0
+
+                        obj_bonus = object_weight * min(float(conf), 1.5)
+                        raw_candidates.append({
+                            "kf_key": kf_k,
+                            "video": v_id,
+                            "kf_name": kf_name,
+                            "frame_idx": frame_idx,
+                            "pts_time": pts_time,
+                            "siglip_score": 0.18,
+                            "final_score": 0.18 + obj_bonus,
+                            "matched_objs": {q_ent: float(conf)},
+                            "obj_match_score": float(conf),
+                            "matched_transcript": None
+                        })
 
     # Sắp xếp lại theo điểm kết hợp Final Score
     raw_candidates.sort(key=lambda x: x["final_score"], reverse=True)
